@@ -203,3 +203,11 @@ body.noscroll { overflow: hidden; }
 .tag.ok-tag { background: #12261A; color: var(--green); }
 .chip.mini { min-height: 26px; padding: 0 9px; font-size: 11px; }
 details summary { color: var(--ink-2); }
+/* v2.1 : options au choix et reps par round */
+.mv-opts { grid-column: 1 / 4; padding: 3px; grid-auto-flow: row; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); }
+.mv-opts button { min-height: 34px; font-size: 12px; padding: 0 6px; line-height: 1.15; }
+.mv-rounds { grid-column: 1 / 5; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 2px; }
+.mv-rounds > span { width: 100%; text-transform: uppercase; letter-spacing: .06em; font-size: 10px; }
+.mv-r { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; color: var(--muted); }
+.mv-r .input { width: 52px; min-height: 38px; padding: 4px; text-align: center; font-weight: 700; }
+.mv-tot b { font-family: var(--display); font-size: 22px; min-width: 40px; text-align: center; }

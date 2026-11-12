@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.0.0';
+  var VERSION = '2.1.0';
   var CFG_KEY = 'kaizen.config';
   var UI_KEY = 'kaizen.ui';
   var PHOTO_KEY = 'kaizen.photo';
@@ -120,7 +120,7 @@
     if (b.type_bloc === 'gym') return { gym: 1 };
     if (b.type_bloc === 'cardio') return { cardio: 1 };
     if (b.type_bloc === 'renfo') return { renfo: 1 };
-    var text = (b.description || b.nom || '').split(/ROOKIE VERSION/i)[0];
+    var text = b.description ? MV.section(b.description, 'RX') : (b.nom || '');
     var lines = text.split(/\n|,/).filter(function (l) { return /[a-z]/i.test(l) && !/^\s*(every|rest|alterner|l'objectif|si ce|interval|rx\/|\d+\s*rounds?\s*(of)?:?\s*$)/i.test(l); });
     var c = { haltero: 0, gym: 0, cardio: 0, renfo: 0 }, n = 0;
     lines.forEach(function (l) {
@@ -175,7 +175,8 @@
     Object.keys(clsBy).forEach(function (k) { clsBy[k].sort(function (a, b) { return a.rang - b.rang; }); });
     var movBy = {};
     (raw.mouvements || []).forEach(function (r) {
-      (movBy[r.bloc_id] = movBy[r.bloc_id] || []).push({ ordre: num(r.ordre) || 0, name: String(r.mouvement || ''), key: MV.canon(r.mouvement), reps: num(r.reps), load: num(r.charge_kg), nbDb: num(r.nb_db), unit: r.unite || 'reps', presc: num(r.charge_prog), machine: MV.machineOf(MV.canon(r.mouvement)) });
+      (movBy[r.bloc_id] = movBy[r.bloc_id] || []).push({ ordre: num(r.ordre) || 0, name: String(r.mouvement || ''), key: MV.canon(r.mouvement), reps: num(r.reps), load: num(r.charge_kg), nbDb: num(r.nb_db), unit: r.unite || 'reps', presc: num(r.charge_prog), machine: MV.machineOf(MV.canon(r.mouvement)),
+        perRounds: r.reps_rounds ? String(r.reps_rounds).split(';').map(num) : null });
     });
     Object.keys(movBy).forEach(function (k) { movBy[k].sort(function (a, b) { return a.ordre - b.ordre; }); });
     var sexOf = {};
@@ -556,12 +557,8 @@
     prev.sort(function (a, c) { return a.date_faite < c.date_faite ? 1 : -1; });
     return prev[0] || null;
   }
-  function hasVersions(b) { return /ROOKIE VERSION/i.test(b.description || ''); }
-  function versionText(b, v) {
-    var parts = String(b.description || '').split(/\n?\s*ROOKIE VERSION\s*:?\s*\n?/i);
-    var t = v === 'Rookie' && parts[1] ? parts[1] : parts[0];
-    return t.replace(/^\s*RX\s*\/?\s*(INTER)?\s*VERSION\s*:?\s*\n?/im, '').trim();
-  }
+  function hasVersions(b) { return MV.hasVersions(b.description); }
+  function versionText(b, v) { return MV.section(b.description, v).trim(); }
   function blockCard(b) {
     var h = '<article class="card">';
     var status = b.done ? (b.date_faite && b.date_faite !== b.date_prog ? '<span class="small amber" style="font-weight:600">fait ' + fmtDayShort(b.date_faite) + (b.date_faite.slice(0, 7) !== b.date_prog.slice(0, 7) ? ' ' + MO[parseD(b.date_faite).getMonth()] : '') + '</span>' : '<span class="small ok" style="font-weight:600">fait</span>') : b.statut === 'non fait' ? '<span class="small muted">pas fait</span>' : '<span class="small muted">à faire</span>';
@@ -573,7 +570,7 @@
         v = S.ver[b.id] || (b.done ? b.niveau : null) || M.reg.version_defaut || 'RX';
         txt = versionText(b, v);
         h += '<div class="seg" role="group" aria-label="Version">' + VERSIONS.map(function (x) { return '<button type="button" data-act="bver" data-id="' + esc(b.id) + '" data-v="' + x + '" aria-pressed="' + (v === x) + '">' + x + '</button>'; }).join('') + '</div>';
-        if (v !== 'Rookie') h += '<span class="small muted" style="margin-top:-4px">DarkZone publie une version commune RX/Inter : tu précises ta catégorie au moment du score.</span>';
+        if (v !== 'Rookie' && /RX\s*\/\s*INTER\s*VERSION/i.test(b.description)) h += '<span class="small muted" style="margin-top:-4px">DarkZone publie une version commune RX/Inter : tu précises ta catégorie au moment du score.</span>';
       }
       var long = txt.split('\n').length > 8;
       h += '<div class="desc' + (long ? ' clamp' : '') + '" id="d-' + esc(b.id) + '">' + esc(txt) + '</div>' + (long ? '<button class="chip" style="align-self:flex-start;min-height:32px" data-act="expand" data-v="' + esc(b.id) + '">Tout afficher</button>' : '');
@@ -661,22 +658,37 @@
   // Aperçu « ce que je compte » sous le texte collé.
   function previewMoves(desc, type) {
     if (!desc.trim()) return '';
-    var vers = /ROOKIE VERSION/i.test(desc) ? ['RX', 'Rookie'] : ['RX'];
+    var sc = MV.hasVersions(desc) ? ['RX', 'Inter', 'Rookie'] : ['RX'], seen = {}, vers = sc.filter(function (v) { var t = MV.section(desc, v); if (seen[t]) return false; seen[t] = 1; return true; });
     return vers.map(function (v) {
       var mv = MV.parse(desc, { reg: M.reg, sex: M.reg.sexe || 'H', version: v, scoreType: type });
       if (!mv.length) return '';
-      return '<div class="card" style="gap:6px"><h2 class="label">Ce que je compte' + (vers.length > 1 ? ' · ' + (v === 'RX' ? 'RX/Inter' : 'Rookie') : '') + '</h2>' + mv.map(function (m) {
+      return '<div class="card" style="gap:6px"><h2 class="label">Ce que je compte' + (vers.length > 1 ? ' · ' + v : '') + '</h2>' + mv.map(function (m) {
         return '<div class="between small"><span>' + esc(m.name) + (m.hint ? ' <span class="' + (m.range || m.max ? 'amber' : 'muted') + '">· ' + esc(m.hint) + '</span>' : '') + '</span><b>' + (m.reps != null ? fmtInt(m.reps) + ' ' + (m.unit === 'reps' ? 'reps' : m.unit) : '?') + (m.load ? ' · ' + fmtKg(m.load) + (m.nbDb === 2 ? ' ×2' : '') : '') + '</b></div>';
       }).join('') + '</div>';
     }).join('') + '<span class="small muted">« 6/6 » avec le même chiffre = par côté. « 9/6 kg » ou « 30/20 cal » = homme / femme. Les lignes incertaines sont en orange : tu les complètes avec ton score.</span>';
   }
 
   // ---------- Saisie du score ----------
-  function cloneMoves(list) { return list.map(function (m) { return { name: m.name, key: m.key, reps: m.reps, load: m.load, presc: m.presc != null ? m.presc : m.load, nbDb: m.nbDb, unit: m.unit, machine: m.machine, hint: m.hint || '', range: m.range, max: m.max }; }); }
+  function cloneMoves(list) {
+    return list.map(function (m) {
+      var pr = m.perRounds ? m.perRounds.slice() : m.rounds ? Array.apply(null, Array(m.rounds)).map(function () { return m.perRound; }) : null;
+      return { name: m.name, key: m.key, reps: m.reps, load: m.load, presc: m.presc != null ? m.presc : m.load, nbDb: m.nbDb, unit: m.unit, machine: m.machine, hint: m.hint || '', range: m.range, max: m.max,
+        rounds: pr ? pr.length : null, perRound: m.perRound, perRounds: pr, options: m.options || null, choice: m.choice != null ? m.choice : null };
+    });
+  }
+  // Mouvements déjà saisis : on leur rend les options « au choix » de la prog.
+  function withOptions(saved, parsed) {
+    return saved.map(function (m) {
+      var p = parsed.find(function (x) { return x.options && x.options.some(function (o) { return o.key === m.key; }); });
+      if (!p) return m;
+      return Object.assign({}, m, { options: p.options, choice: p.options.findIndex(function (o) { return o.key === m.key; }), hint: m.hint || 'au choix' });
+    });
+  }
   function openScore(id) {
     var b = M.byId[id]; if (!b) return;
     var lvl = b.done ? (b.niveau || 'RX') : (S.ver[id] || M.reg.version_defaut || 'RX');
-    var mv = b.done && M.mov[id] ? M.mov[id] : MV.parse(b.description, { reg: M.reg, sex: M.reg.sexe || 'H', version: lvl, score: b.score_valeur, scoreType: b.type_score });
+    var parsed = MV.parse(b.description, { reg: M.reg, sex: M.reg.sexe || 'H', version: lvl, score: b.score_valeur, scoreType: b.type_score });
+    var mv = b.done && M.mov[id] ? withOptions(M.mov[id], parsed) : parsed;
     var t = iso(today());
     F = { id: id, level: lvl, kind: b.type_score || 'temps', rpe: b.rpe_ressenti || null, date: b.date_faite || (t < b.date_prog ? b.date_prog : t), moves: cloneMoves(mv), edited: !!(b.done && M.mov[id]), vals: {} };
     drawScore();
@@ -701,17 +713,21 @@
       var isDb = /\b(db|kb)\b/i.test(m.key || m.name || '');
       var changed = m.presc != null && m.load != null && m.load !== m.presc;
       var unitLbl = m.unit === 'cal' ? 'cal' : m.unit === 'm' ? 'm' : m.unit === 's' ? 's' : '';
+      var opts = m.options && m.options.length > 1 ? '<div class="mv-opts seg" role="group" aria-label="Mouvement au choix">' + m.options.map(function (o, j) { return '<button type="button" data-act="fopt" data-i="' + i + '" data-v="' + j + '" aria-pressed="' + (m.choice === j) + '">' + (o.perRound != null ? o.perRound + ' ' : '') + esc(o.name) + '</button>'; }).join('') + '</div>' : '';
+      var rounds = m.perRounds ? '<div class="mv-rounds"><span class="small muted">Par round</span>' + m.perRounds.map(function (v, k) { return '<label class="mv-r"><span>R' + (k + 1) + '</span><input class="input" data-mi="' + i + '" data-f="pr" data-r="' + k + '" inputmode="numeric" value="' + (v != null ? v : '') + '" aria-label="' + esc(m.name) + ' round ' + (k + 1) + '"></label>'; }).join('') + '</div>' : '';
+      var repsCell = m.perRounds ? '<div class="mv-in mv-tot"><b id="mvt-' + i + '">' + (m.reps != null ? m.reps : '–') + '</b>' + (unitLbl ? '<span class="small muted">' + unitLbl + '</span>' : '<span class="small muted">total</span>') + '</div>'
+        : '<div class="mv-in"><input class="input" data-mi="' + i + '" data-f="reps" inputmode="numeric" value="' + (m.reps != null ? m.reps : '') + '" aria-label="Reps ' + esc(m.name) + '"' + (unitLbl ? ' placeholder="' + unitLbl + '"' : '') + '>' + (unitLbl ? '<span class="small muted">' + unitLbl + '</span>' : '') + '</div>';
+      var loadCell = m.unit === 'reps' ? '<input class="input" data-mi="' + i + '" data-f="load" inputmode="decimal" value="' + (m.load != null ? String(m.load).replace('.', ',') : '') + '" placeholder="—" aria-label="Charge ' + esc(m.name) + '">' : m.machine ? '<span class="small muted" style="padding-left:6px">machine</span>' : '<span class="small muted" style="padding-left:6px">—</span>';
       return '<div class="mv">' +
         '<div class="mv-name">' + (m.isNew ? '<input class="input" data-mi="' + i + '" data-f="name" value="' + esc(m.name) + '" placeholder="ex. Wall ball" aria-label="Nom du mouvement">' : '<b>' + esc(m.name) + '</b>') +
         (m.hint ? '<span class="small ' + (m.range || m.max ? 'amber' : 'muted') + '">' + esc(m.hint) + '</span>' : '') + (changed ? '<span class="small amber">charge modifiée · prog ' + fmtKg(m.presc) + '</span>' : '') + '</div>' +
-        '<div class="mv-in"><input class="input" data-mi="' + i + '" data-f="reps" inputmode="numeric" value="' + (m.reps != null ? m.reps : '') + '" aria-label="Reps ' + esc(m.name) + '"' + (unitLbl ? ' placeholder="' + unitLbl + '"' : '') + '>' + (unitLbl ? '<span class="small muted">' + unitLbl + '</span>' : '') + '</div>' +
-        '<div class="mv-in">' + (m.unit === 'reps' ? '<input class="input" data-mi="' + i + '" data-f="load" inputmode="decimal" value="' + (m.load != null ? String(m.load).replace('.', ',') : '') + '" placeholder="—" aria-label="Charge ' + esc(m.name) + '">' : '<span class="small muted" style="padding-left:6px">machine</span>') + '</div>' +
+        repsCell + '<div class="mv-in">' + loadCell + '</div>' + opts + rounds +
         (isDb && m.unit === 'reps' ? '<div class="mv-db seg" role="group" aria-label="Nombre d’haltères"><button type="button" data-act="fdb" data-i="' + i + '" data-v="1" aria-pressed="' + ((m.nbDb || 1) === 1) + '">1 DB</button><button type="button" data-act="fdb" data-i="' + i + '" data-v="2" aria-pressed="' + (m.nbDb === 2) + '">2 DB</button></div>' : '') +
         '<button type="button" class="mv-del" data-act="fmdel" data-i="' + i + '" aria-label="Retirer ' + esc(m.name || 'ce mouvement') + '">' + icon(I.x) + '</button>' +
         '</div>';
     }).join('') + '</div>';
     h += '<button type="button" class="chip" style="align-self:flex-start" data-act="fmadd">+ Mouvement</button>';
-    h += '<span class="small muted">Prérempli avec la prog de ta version (reps × rounds, charge homme ou femme selon ton profil). Change une charge ou des reps si tu as fait autre chose, par exemple une charge entre RX et Inter. Ces chiffres alimentent les reps, les kg, les km et les calories de l’accueil.</span></div>';
+    h += '<span class="small muted">Prérempli avec la prog de ta version (reps par round, charge homme ou femme selon ton profil). Tape ce que tu as fait à chaque round : le total se calcule tout seul. Change une charge ou des reps si tu as fait autre chose, par exemple une charge entre RX et Inter. Ces chiffres alimentent les reps, les kg, les km et les calories de l’accueil.</span></div>';
     return h;
   }
   function drawScore() {
@@ -724,7 +740,9 @@
       '<div class="row"><label for="s-date" class="small muted" style="white-space:nowrap">Ou n’importe quelle date</label><input class="input" type="date" id="s-date" value="' + F.date + '" style="min-height:40px"></div>' +
       '<span class="small muted">Le score reste rattaché au jour de la prog pour le classement, et compte dans ta semaine à la date où tu l’as fait.</span></div>';
     h += '<div class="field"><span class="label">Version</span><div class="seg">' + VERSIONS.map(function (v) { return '<button type="button" data-act="flvl" data-v="' + v + '" aria-pressed="' + (F.level === v) + '">' + v + '</button>'; }).join('') + '</div></div>';
-    var kinds = ['temps', 'reps', 'valide']; if (kinds.indexOf(b.type_score) < 0 && b.type_score) kinds.push(b.type_score); if (kinds.indexOf(F.kind) < 0) kinds.push(F.kind);
+    var kinds = ['temps', 'reps', 'valide']; if (kinds.indexOf(b.type_score) < 0 && b.type_score) kinds.push(b.type_score);
+    if (/amrap/i.test(MV.section(b.description, F.level)) && kinds.indexOf('rounds_reps') < 0) kinds.push('rounds_reps');
+    if (kinds.indexOf(F.kind) < 0) kinds.push(F.kind);
     h += '<div class="field"><span class="label">Type de score</span><div class="seg">' + kinds.map(function (k) { return '<button type="button" data-act="fkind" data-v="' + k + '" aria-pressed="' + (F.kind === k) + '">' + SCORE_TYPES[k] + '</button>'; }).join('') + '</div>' +
       (b.type_score ? '<span class="small muted">Prérempli selon le score prévu pour ce bloc (' + esc((SCORE_TYPES[b.type_score] || '').toLowerCase()) + '). Tu peux le changer.</span>' : '') + '</div>';
     h += scoreInputs(b);
@@ -771,6 +789,8 @@
       captureScore();
       var sc = readScore();
       if (!sc) { var e = $('#s-err'); e.textContent = 'Renseigne ton score avant d’enregistrer.'; e.hidden = false; e.scrollIntoView({ block: 'center' }); return; }
+      // AMRAP : sans retouche, les reps de la prog (1 round) sont multipliées par tes rounds.
+      if (F.kind === 'rounds_reps' && !F.edited && sc.v) F.moves = cloneMoves(MV.parse(b.description, { reg: M.reg, sex: M.reg.sexe || 'H', version: F.level, score: sc.v, scoreType: 'rounds_reps' }));
       moves = F.moves.filter(function (m) { return m.name && m.name.trim(); });
       var cal = {}, km = {};
       moves.forEach(function (m) {
@@ -790,7 +810,7 @@
       } else if (!row.participants && board.length) row.participants = board.length + (row.rang ? 0 : 1);
     }
     var btn = $('[data-act="fsave"]'); if (btn) btn.disabled = true;
-    var mvRows = moves ? moves.map(function (m, i) { return { ordre: i + 1, mouvement: m.name.trim(), reps: m.reps != null ? m.reps : '', charge_kg: m.unit === 'reps' && m.load != null ? m.load : '', nb_db: m.nbDb || '', unite: m.unit || 'reps', charge_prog: m.presc != null ? m.presc : '' }; }) : null;
+    var mvRows = moves ? moves.map(function (m, i) { return { ordre: i + 1, mouvement: m.name.trim(), reps: m.reps != null ? m.reps : '', charge_kg: m.unit === 'reps' && m.load != null ? m.load : '', nb_db: m.nbDb || '', unite: m.unit || 'reps', charge_prog: m.presc != null ? m.presc : '', reps_rounds: m.perRounds ? m.perRounds.map(function (v) { return v == null ? '' : v; }).join(';') : '' }; }) : null;
     var warnGw = false;
     apiPost({ action: 'upsert', sheet: 'Seances', row: row }).then(function () {
       if (!mvRows) return;
@@ -1180,6 +1200,12 @@
       inp.oninput = function () {
         var m = F.moves[+inp.dataset.mi], f = inp.dataset.f; F.edited = true;
         if (f === 'name') { m.name = inp.value; m.key = MV.canon(inp.value); m.machine = MV.machineOf(m.key); }
+        else if (f === 'pr') {
+          m.perRounds[+inp.dataset.r] = num(inp.value);
+          var known = m.perRounds.filter(function (v) { return v != null; });
+          m.reps = known.length ? known.reduce(function (a, b) { return a + b; }, 0) : null;
+          var t = $('#mvt-' + inp.dataset.mi); if (t) t.textContent = m.reps != null ? m.reps : '–';
+        }
         else m[f] = num(inp.value);
       };
     });
@@ -1227,9 +1253,19 @@
       case 'fdate': F.date = v; $('#s-date').value = v; $$('[data-act="fdate"]').forEach(function (x) { x.setAttribute('aria-pressed', x.dataset.v === v); }); break;
       case 'flvl':
         captureScore(); F.level = v;
+        if (!F.kindTouched) { var b0 = M.byId[F.id], am = /amrap/i.test(MV.section(b0.description, v)); F.kind = am && b0.type_score !== 'rounds_reps' && !/amrap/i.test(MV.section(b0.description, 'RX')) ? 'rounds_reps' : (b0.type_score || F.kind); }
         if (!F.edited) { var b = M.byId[F.id]; F.moves = cloneMoves(MV.parse(b.description, { reg: M.reg, sex: M.reg.sexe || 'H', version: v, score: b.score_valeur, scoreType: F.kind })); }
         drawScore(); break;
-      case 'fkind': captureScore(); F.kind = v; drawScore(); break;
+      case 'fkind': captureScore(); F.kind = v; F.kindTouched = true; drawScore(); break;
+      case 'fopt':
+        captureScore();
+        var mo = F.moves[+el.dataset.i], op = mo.options[+v];
+        mo.choice = +v; mo.name = op.name; mo.key = op.key; mo.unit = op.unit || 'reps'; mo.machine = op.machine; mo.nbDb = op.nbDb;
+        if (op.load != null) { mo.load = op.load; mo.presc = op.load; }
+        var oldPr = mo.perRound; mo.perRound = op.perRound;
+        if (mo.perRounds) { mo.perRounds = mo.perRounds.map(function () { return op.perRound; }); mo.reps = op.perRound != null ? op.perRound * mo.perRounds.length : null; }
+        else if (op.perRound != null && mo.reps != null && oldPr) mo.reps = Math.round(mo.reps / oldPr * op.perRound);
+        F.edited = true; drawScore(); break;
       case 'fdb': captureScore(); F.moves[+el.dataset.i].nbDb = +v; F.edited = true; drawScore(); break;
       case 'fmadd': captureScore(); F.moves.push({ name: '', key: '', reps: null, load: null, presc: null, nbDb: null, unit: 'reps', isNew: true }); F.edited = true; drawScore(); break;
       case 'fmdel': captureScore(); F.moves.splice(+el.dataset.i, 1); F.edited = true; drawScore(); break;

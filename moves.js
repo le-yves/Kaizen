@@ -30,6 +30,7 @@
     [/\bmuscle ?ups?\b/g, 'muscle-up'], [/\bbmu\b/g, 'bar muscle-up'], [/\brmu\b/g, 'ring muscle-up'], [/\bski ?erg\b/g, 'ski'], [/\bbike ?erg\b/g, 'bike'],
     [/\bassault bike\b/g, 'echo bike'], [/\bwb\b/g, 'wall ball'], [/\bc&j\b/g, 'clean & jerk'], [/\bclean and jerk\b/g, 'clean & jerk'], [/\bohs\b/g, 'overhead squat']
   ];
+  function MV_canon(n) { return canon(n); }
   function canon(name) {
     var s = ' ' + String(name || '').toLowerCase().replace(/[’']/g, "'") + ' ';
     ALIAS.forEach(function (a) { s = s.replace(a[0], a[1]); });
@@ -62,23 +63,47 @@
 
   function loadFrom(text, sex) {
     // « 22,5/15 kg », « 20 kg », « @ 60kg », « 95/65 lb »
-    var m = String(text).match(/@?\s*(\d+(?:[.,]\d+)?)(?:\s*\/\s*(\d+(?:[.,]\d+)?))?\s*(kg|lbs?|#)\b/i);
-    if (!m) return null;
+    var m = String(text).match(/@?\s*(\d+(?:[.,]\d+)?)(?:\s*\/\s*(\d+(?:[.,]\d+)?))?\s*(kgs?|lbs?|#)(?![a-z])/i);
+    if (!m) {
+      // DarkZone écrit souvent la charge sans unité en fin de ligne : « Deadlift 100/70 », « KB swing 32/24 ».
+      m = String(text).match(/[a-z)]\s+(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)\s*$/i);
+      if (!m) return null;
+      var a0 = num(m[1]), b0 = num(m[2]);
+      return sex === 'F' ? b0 : a0;
+    }
     var a = num(m[1]), b = num(m[2]), v = sex === 'F' && b != null ? b : a;
     if (/lb|#/i.test(m[3])) v = r05(v * 0.4536);
     return v;
   }
 
+  // Découpe le texte selon les en-têtes « RX VERSION », « RX/INTER VERSION », « INTER VERSION », « ROOKIE VERSION ».
+  var VER_RE = /^[^A-Za-z\n]*(RX\s*\/\s*INTER|RX|INTER|ROOKIE)\s*VERSION\b[^\n]*$/gim;
+  function sections(desc) {
+    var t = String(desc || ''), out = { pre: '' }, m, last = null, idx = 0, found = false;
+    VER_RE.lastIndex = 0;
+    while ((m = VER_RE.exec(t))) {
+      var chunk = t.slice(idx, m.index);
+      if (last) out[last] = (out[last] || '') + chunk; else out.pre += chunk;
+      last = m[1].toUpperCase().replace(/\s/g, ''); idx = m.index + m[0].length; found = true;
+    }
+    if (last) out[last] = (out[last] || '') + t.slice(idx); else out.pre += t.slice(idx);
+    out.found = found;
+    return out;
+  }
+  function hasVersions(desc) { var s = sections(desc); return !!(s.ROOKIE || s.INTER || s['RX/INTER']); }
   function pickSection(desc, version) {
-    var t = String(desc || '');
-    var parts = t.split(/\n?\s*ROOKIE VERSION\s*:?\s*\n?/i);
-    var s = version === 'Rookie' && parts[1] ? parts[1] : parts[0];
-    return s.replace(/^\s*RX\s*\/?\s*(INTER)?\s*VERSION\s*:?\s*$/gim, '');
+    var s = sections(desc);
+    if (!s.found) return String(desc || '');
+    var body;
+    if (version === 'Rookie') body = s.ROOKIE || s['RX/INTER'] || s.RX || s.INTER;
+    else if (version === 'Inter') body = s.INTER || s['RX/INTER'] || s.RX || s.ROOKIE;
+    else body = s.RX || s['RX/INTER'] || s.INTER || s.ROOKIE;
+    return ((s.pre || '').trim() ? s.pre.trim() + '\n\n' : '') + String(body || '').trim();
   }
 
   function cleanLine(l) {
     return l.replace(/[℀-⅏←-⇿⌀-➿⬀-⯿️‍]|[\uD83C-\uDBFF][\uDC00-\uDFFF]/g, '')
-      .replace(/\((?:rir|rpe|pause|tempo|3m|\d+\s*m\b)[^)]*\)/gi, '').replace(/\s+/g, ' ').trim();
+      .replace(/^\s*(?:\+|[a-e]\))\s*/i, '').replace(/\((?:rir|rpe|pause|tempo|3m|\d+\s*m\b)[^)]*\)/gi, '').replace(/\s+/g, ' ').trim();
   }
 
   // « 18 rounds of Cindy », « 3 round of DTs, 60 kg »
@@ -100,6 +125,7 @@
     var out = [], sec = [], mult = 1, alternate = /altern/i.test(text), alternating = false, scheme = null, amrap = false;
     var intervals = /interval\s*b/i.test(text) && /altern/i.test(desc || ''), curInterval = null;
     var progression = null, everySec = false;
+    var lettered = (text.match(/^\s*[a-e]\)/gim) || []).length;
 
     function flushSection() {
       if (everySec && mult > 1 && sec.length >= mult && sec.length % mult === 0 && !alternating) sec.forEach(function (m) { if (!m.fixed) m.mult = m.mult / mult * (sec.length / mult === 1 ? 1 : 1); });
@@ -112,8 +138,8 @@
       sec = []; alternating = false;
     }
 
-    function addMove(o) {
-      o.mult = o.fixed ? 1 : (o.interval ? (o.interval === 'A' ? Math.ceil(mult / 2) : Math.floor(mult / 2)) : mult);
+    function addMove(o, slot) {
+      o.mult = o.fixed ? 1 : (o.interval ? (o.interval === 'A' ? Math.ceil(mult / 2) : Math.floor(mult / 2)) : slot ? mult / lettered : mult);
       sec.push(o);
     }
 
@@ -165,7 +191,8 @@
       if (ld != null && o.load == null) o.load = ld;
       var pct = body.match(/(\d+(?:[.,]\d+)?)\s*%\s*(?:du\s+|de\s+|of\s+)?(?:1\s*)?rm\s*([a-z&' ]{3,30})?/i);
       if (pct) { var rm = rmFor(pct[2] || body, reg); if (rm) { o.load = r05(rm.rm * num(pct[1]) / 100); o.pct = num(pct[1]); } }
-      o.c = canon(body.replace(/@.*$/, '').replace(/\d+(?:[.,]\d+)?(?:\s*\/\s*\d+(?:[.,]\d+)?)?\s*(kg|lbs?|#)\b/gi, '').replace(/\d+(?:[.,]\d+)?\s*%.*$/, '').replace(/\balt\b/i, ' alt '));
+      if (/\b(ubk|unbroken)\b/i.test(body)) { o.ubk = true; body = body.replace(/\b(ubk|unbroken)\b/ig, ' '); }
+      o.c = canon(body.replace(/@.*$/, '').replace(/\d+(?:[.,]\d+)?(?:\s*\/\s*\d+(?:[.,]\d+)?)?\s*(kgs?|lbs?|#)(?![a-z])/gi, '').replace(/\s\d+(?:[.,]\d+)?\s*\/\s*\d+(?:[.,]\d+)?\s*$/, '').replace(/\d+(?:[.,]\d+)?\s*%.*$/, '').replace(/\balt\b/i, ' alt '));
       if (!o.c || !/[a-z]/.test(o.c)) return null;
       var mach = machineOf(o.c);
       if (mach && mach !== 'run' && o.unit === 'reps' && res != null && o.perRound != null) o.unit = 'cal';
@@ -175,11 +202,13 @@
       return o;
     }
 
-    lines.forEach(function (l) {
+    var rawLines = text.split('\n');
+    lines.forEach(function (l, li) {
       if (!l) { return; }
+      var isLettered = lettered > 1 && /^\s*[a-e]\)/i.test(rawLines[li] || '');
       var m;
       // En-têtes de rounds
-      if ((m = l.match(/every\s*(\d+(?:[.,]\d+)?)\s*(?:['’]|min\w*|:\d+)?\s*(?:x|×)\s*(\d+)(?:\s*-\s*(\d+))?\s*(?:rounds?|sets?|tours?)?/i))) {
+      if ((m = l.match(/every\s*(\d+(?:[.,]\d+)?)\s*(?:['’]\d*|min\w*|:\d+)?\s*(?:x|×)\s*(\d+)(?:\s*-\s*(\d+))?\s*(?:rounds?|sets?|tours?)?/i))) {
         flushSection(); mult = num(m[3] || m[2]); everySec = true; if (m[3]) progression = { lo: num(m[2]), hi: num(m[3]) }; scheme = null; return;
       }
       if ((m = l.match(/every\s*(\d+(?:[.,]\d+)?)\s*(?:min\w*|['’])?\s*for\s*(\d+)\s*min/i))) {
@@ -187,7 +216,11 @@
       }
       if ((m = l.match(/^(?:e?mom|otm)\s*(\d+)/i))) { flushSection(); mult = num(m[1]); alternating = /altern/i.test(l); return; }
       if ((m = l.match(/(\d+)\s*:\s*00\s*amrap|amrap\s*(\d+)/i))) { flushSection(); amrap = true; mult = 1; return; }
-      if ((m = l.match(/^(\d+(?:\s*-\s*\d+){1,})\s*(?:reps?)?\s*(?:of|de|for time)?\s*:?\s*$/i)) || (m = l.match(/^(\d+(?:-\d+){2,})\b/))) {
+      // Échelle « 3-6-9-12 etc Hang power clean 60/40 » : reps inconnues, à saisir avec le score.
+      if ((m = l.match(/^(\d+(?:\s*-\s*\d+){2,})\s*(?:etc\.?|\.\.\.|…)\s+([a-z].*)$/i))) {
+        var lo = lineToMove(m[2], null); if (lo) { lo.max = true; lo.perRound = null; lo.ladder = m[1].replace(/\s/g, ''); addMove(lo); } return;
+      }
+      if ((m = l.match(/^(\d+(?:\s*-\s*\d+){1,})\s*(?:reps?)?\s*(?:of|de|for time)?\s*:?\s*$/i)) || (m = l.match(/^(\d+(?:-\d+){2,})\s*(?:reps?\b|of\b|:|$)/i))) {
         scheme = m[1].split('-').map(Number).reduce(function (a, b) { return a + b; }, 0); mult = 1; return;
       }
       if ((m = l.match(/^(\d+)\s*rounds?\s*of\s*(dumbbell |db )?(cindy|cindies|dts?|fran)\b(.*)$/i))) {
@@ -202,9 +235,10 @@
       }
       if ((m = l.match(/^interval\s*([ab])\b/i))) { flushSection(); curInterval = intervals ? m[1].toUpperCase() : null; return; }
       // % RM sur ligne séparée : s'applique au groupe en cours
-      if (/%/.test(l) && /\brm\b/i.test(l) && /^\s*(\d+(?:[.,]\d+)?\s*%|commencer|start|@|à\s*\d)/i.test(l)) {
+      if (/%/.test(l) && /\brm\b/i.test(l) && /^\s*(\d+(?:[.,]\d+)?\s*(?:[-–]\s*\d+(?:[.,]\d+)?\s*)?%|commencer|start|@|à\s*\d)/i.test(l)) {
         var rm = rmFor(l, reg);
-        var p = l.match(/(\d+)\s*%(?:\s*(?:to|à|-|et)\s*(\d+)\s*%)?/);
+        var pr = l.match(/(\d+(?:[.,]\d+)?)\s*%?\s*[-–]\s*(\d+(?:[.,]\d+)?)\s*%/), all = (l.match(/\d+(?:[.,]\d+)?\s*%/g) || []).map(function (x) { return parseFloat(x.replace(',', '.')); });
+        var p = pr ? [null, pr[1], pr[2]] : all.length ? [null, String(all[0]), all.length > 1 ? String(all[all.length - 1]) : null] : null;
         var step = l.match(/augmenter de\s*(\d+(?:[.,]\d+)?)\s*%/i);
         if (rm && p) {
           var lo = num(p[1]), hi = p[2] ? num(p[2]) : null;
@@ -217,6 +251,23 @@
             var avg = hi ? (lo + hi) / 2 : lo;
             sec.forEach(function (mv) { if (mv.load == null) { mv.load = r05(rm.rm * avg / 100); mv.pct = avg; } });
           }
+        }
+        return;
+      }
+      if ((m = l.match(/compl[ée]t\w*\s+(\d+)\s+(.+?)\.?$/i))) {
+        var target = MV_canon(m[2]), mx = sec.filter(function (mv) { return mv.max && mv.perRound == null; }).find(function (mv) { return mv.c.indexOf(target.split(' ').pop()) >= 0; });
+        if (mx) { mx.perRound = num(m[1]); mx.mult = 1; mx.max = false; mx.goal = true; }
+        return;
+      }
+      // « Au choix : 20 double crossover, 60 simple crossover ou 60 DU » : options du mouvement juste au-dessus.
+      if ((m = l.match(/^au choix\s*:?\s*(.+)$/i))) {
+        var last = sec[sec.length - 1];
+        if (last) {
+          var opts = m[1].replace(/\.$/, '').split(/\s*,\s*|\s+(?:ou|or)\s+/i).map(function (p) { return lineToMove(p.trim(), null); }).filter(Boolean);
+          opts.forEach(function (op) { if (op.perRound == null) { op.perRound = last.perRound; op.unit = last.unit; } });
+          var ix = opts.findIndex(function (op) { return op.c === last.c; });
+          if (ix < 0) { opts.unshift(Object.assign({}, last)); ix = 0; }
+          if (opts.length > 1) { last.options = opts; last.choice = ix; }
         }
         return;
       }
@@ -235,12 +286,24 @@
       if (/^[a-z]/i.test(l) && !/\|/.test(l) && !/\d/.test(l.slice(0, 3)) && !scheme && !/^max\b/i.test(l) && !/,\s*\d+(?:[.,]\d+)?\s*(m|km)\b|calor/i.test(l)) {
         // ligne de texte sans chiffre (consigne) : ignorée sauf mouvement nu dans un WOD nommé
         if (l.split(' ').length > 6 || /[.!?]$/.test(l)) return;
-        var bare = lineToMove(l, null);
-        if (bare) { bare.unknown = true; addMove(bare); }
-        return;
+        return; // consigne ou titre (« Skill work », « Relay you go, I go ») : pas un mouvement
+      }
+      // « 6 Chest to bar ou pull ups » : plusieurs mouvements au choix sur la même ligne.
+      if (/^(\d|max\b)/i.test(l) && /\s(?:ou|or)\s/i.test(l) && !/\|/.test(l)) {
+        var parts = l.split(/\s+(?:ou|or)\s+/i), first = lineToMove(parts[0], null);
+        if (first) {
+          var ops = [first].concat(parts.slice(1).map(function (p) {
+            var op = lineToMove(p.trim(), null);
+            if (op && !/^\d/.test(p.trim())) { op.perRound = first.perRound; op.unit = first.unit; op.max = first.max; op.range = first.range; if (op.load == null) op.load = first.load; }
+            return op;
+          }).filter(Boolean));
+          if (ops.length > 1) { first.options = ops; first.choice = 0; }
+          addMove(first, isLettered);
+          return;
+        }
       }
       var o = lineToMove(l, null);
-      if (o) addMove(o);
+      if (o) addMove(o, isLettered);
     });
     flushSection();
 
@@ -266,17 +329,23 @@
     out.forEach(function (mv, i) {
       var reps = mv.perRound != null ? Math.round(mv.perRound * mv.mult) : null;
       var nb = defaultDb(mv.c, mv.perSide);
+      var rounds = !mv.fixed && !mv.goal && !mv.fromScore && mv.mult >= 2 && mv.mult <= 12 && Math.round(mv.mult) === mv.mult ? mv.mult : null;
+      var options = mv.options ? mv.options.map(function (op) { return { name: display(op.c), key: op.c, perRound: op.perRound, load: op.load, unit: op.unit, machine: op.machine || null, nbDb: defaultDb(op.c, op.perSide) }; }) : null;
       res.push({
+        rounds: rounds, perRound: mv.perRound, options: options, choice: mv.options ? mv.choice : null,
         ordre: i + 1, key: mv.c, name: display(mv.c), reps: reps, load: mv.load, nbDb: nb, unit: mv.unit, machine: mv.machine || null,
-        range: mv.range, max: mv.max && !mv.fromScore, avgLoad: !!mv.avgLoad, pct: mv.pct || null, perSide: mv.perSide, raw: mv.raw,
-        hint: mv.range ? 'fourchette ' + mv.range + ' par round' : mv.max && !mv.fromScore ? 'max : reps à saisir' : mv.fromScore ? 'repris du score' : mv.perSide ? mv.raw.match(/^\d+\s*\/\s*\d+/)[0].replace(/\s/g, '') + ' = par côté' : mv.avgLoad ? 'charge moyenne de la progression' : mv.pct ? mv.pct + ' % RM' : ''
+        range: mv.range, max: mv.max && !mv.fromScore, ladder: mv.ladder || null, avgLoad: !!mv.avgLoad, pct: mv.pct || null, perSide: mv.perSide, raw: mv.raw,
+        hint: (mv.ubk ? 'unbroken · ' : '') + (mv.options ? 'au choix' + (mv.range ? ' · fourchette ' + mv.range : '') : mv.ladder ? 'échelle ' + mv.ladder + '… : reps à saisir' : mv.goal ? 'total visé par la prog' : mv.range ? 'fourchette ' + mv.range + ' par round' : mv.max && !mv.fromScore ? 'max : reps à saisir' : mv.fromScore ? 'repris du score' : mv.perSide ? mv.raw.match(/^\d+\s*\/\s*\d+/)[0].replace(/\s/g, '') + ' = par côté' : mv.avgLoad ? 'charge moyenne de la progression' : mv.pct ? mv.pct + ' % RM' : '')
       });
     });
     // Fusionne les doublons (même mouvement, même charge, même unité).
     var merged = [];
     res.forEach(function (m) {
-      var d = merged.find(function (x) { return x.key === m.key && x.unit === m.unit && x.load === m.load && x.nbDb === m.nbDb && !x.range && !m.range && !x.max && !m.max; });
-      if (d && d.reps != null && m.reps != null) d.reps += m.reps; else merged.push(m);
+      var d = merged.find(function (x) { return x.key === m.key && x.unit === m.unit && x.load === m.load && x.nbDb === m.nbDb && !x.range && !m.range && !x.max && !m.max && !x.options && !m.options; });
+      if (d && d.reps != null && m.reps != null) {
+        if (d.rounds && d.rounds === m.rounds) d.perRound += m.perRound; else { d.rounds = null; }
+        d.reps += m.reps;
+      } else merged.push(m);
     });
     merged.forEach(function (m, i) { m.ordre = i + 1; });
     return merged;
@@ -288,6 +357,6 @@
     return m.reps * m.load * (m.nbDb || 1);
   }
 
-  var api = { parse: parse, canon: canon, display: display, kgOf: kgOf, rmFor: rmFor, machineOf: machineOf, defaultDb: defaultDb };
+  var api = { parse: parse, section: pickSection, hasVersions: hasVersions, canon: canon, display: display, kgOf: kgOf, rmFor: rmFor, machineOf: machineOf, defaultDb: defaultDb };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.KaizenMoves = api;
 })(this);
