@@ -1,9 +1,10 @@
-# Kaizen
+# Kaizen v2.0
 
-Web app perso de suivi CrossFit (DarkZone), records et endurance (Strava).
+Suivi CrossFit, DarkZone et endurance, installable sur l'écran d'accueil de l'iPhone.
 
-- Interface : `index.html`, `styles.css`, `app.js` (aucune dépendance, aucune étape de build).
-- Données : Google Sheet « Kaizen », lu et écrit via la passerelle `apps-script/Code.gs`.
-- Hébergement : GitHub Pages. Installable sur l'écran d'accueil (Safari › Partager › Sur l'écran d'accueil).
+- `index.html`, `styles.css`, `app.js` : l'app.
+- `moves.js` : lecture des mouvements d'un WOD (reps × rounds, charges, 1 ou 2 haltères).
+- `sw.js`, `manifest.webmanifest`, icônes : installation et ouverture hors ligne.
+- `Code.gs` : passerelle à coller dans Apps Script (Extensions › Apps Script du Google Sheet).
 
-Aucune donnée personnelle n'est stockée dans ce dépôt : l'adresse de la passerelle et le code secret se saisissent dans l'onglet « Moi » de l'app et restent sur le téléphone.
+Aucune donnée personnelle dans ce dépôt : tout est dans le Google Sheet. L'adresse de la passerelle et le code secret sont saisis dans l'onglet Moi et restent sur le téléphone.

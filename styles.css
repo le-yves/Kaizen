@@ -155,3 +155,51 @@ th:last-child, td:last-child { padding-right: 14px; }
 @media (prefers-reduced-motion: no-preference) {
   .card, .list { transition: border-color 0.15s; }
 }
+
+/* ---------- v2 ---------- */
+body.noscroll { overflow: hidden; }
+.notice { border: 1px solid var(--amber); background: var(--amber-soft); color: var(--amber); border-radius: 12px; padding: 10px 12px; font-size: 13px; line-height: 1.4; }
+.chev { width: 16px; height: 16px; fill: none; stroke: var(--muted); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.avatar.photo { overflow: hidden; padding: 0; }
+.avatar.photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bl { width: 42%; flex-shrink: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bv { width: 76px; text-align: right; white-space: nowrap; font-size: 14px; flex-shrink: 0; }
+/* Podium */
+.podium { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: end; }
+.pod { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 10px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pod .place { font-family: var(--display); font-weight: 900; font-size: 13px; letter-spacing: .08em; color: var(--muted); }
+.pod .num { font-size: 26px; }
+.pod .cap { font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pod.p1 { order: 2; padding-top: 22px; border-color: var(--red); background: var(--red-soft); }
+.pod.p1 .place { color: var(--red-ink); }
+.pod.p2 { order: 1; padding-top: 16px; }
+.pod.p3 { order: 3; }
+/* Accordéons PR */
+.acc { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.acc.open { padding-bottom: 4px; }
+.acc-h { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 12px 16px; background: none; border: 0; color: var(--ink); text-align: left; cursor: pointer; }
+.acc-h i { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.acc-h .t { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.acc-h .t b { font-family: var(--display); font-weight: 800; font-size: 20px; text-transform: uppercase; line-height: 1; }
+.acc-h .t span { font-size: 12px; color: var(--muted); }
+.list.flat { border: 0; border-radius: 0; border-top: 1px solid var(--line); background: transparent; }
+/* Saisie des mouvements */
+.mv-head { display: grid; grid-template-columns: minmax(0, 1fr) 72px 80px 28px; gap: 8px; text-transform: uppercase; letter-spacing: .06em; font-size: 10px; }
+.mv-list { display: flex; flex-direction: column; gap: 8px; }
+.mv { display: grid; grid-template-columns: minmax(0, 1fr) 72px 80px 28px; gap: 8px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+.mv-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mv-name b { font-size: 14px; overflow-wrap: anywhere; }
+.mv-in { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.mv-in .input { min-height: 42px; padding: 6px 8px; text-align: center; font-weight: 700; }
+.mv-db { grid-column: 1 / 4; padding: 3px; }
+.mv-db button { min-height: 34px; font-size: 13px; }
+.mv-del { grid-column: 4; grid-row: 1; width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--muted-2); cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+.mv-del svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.5; stroke-linecap: round; }
+/* Classement */
+.li.board { cursor: default; gap: 12px; }
+.li.board.me { background: #1D1012; }
+.li.board .rk { font-size: 20px; width: 26px; text-align: right; flex-shrink: 0; }
+.tag.rx { background: var(--red-soft); color: var(--red-ink); }
+.tag.ok-tag { background: #12261A; color: var(--green); }
+.chip.mini { min-height: 26px; padding: 0 9px; font-size: 11px; }
+details summary { color: var(--ink-2); }

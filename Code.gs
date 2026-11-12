@@ -1,5 +1,5 @@
 /**
- * Kaizen — passerelle entre l'app et le Google Sheet.
+ * Kaizen v2 — passerelle entre l'app et le Google Sheet.
  * À coller dans Extensions > Apps Script du Google Sheet "Kaizen".
  *
  * 1. Exécuter une fois la fonction creerCodeSecret() : le code s'affiche dans le journal d'exécution.
@@ -13,13 +13,21 @@ var SHEETS = {
   Seances: { key: 'id' },
   Strava: { key: 'id' },
   Classements: { key: null },
-  Reglages: { key: 'cle' }
+  Reglages: { key: 'cle' },
+  Mouvements: { key: null, optional: true },
+  Athletes: { key: 'nom', optional: true }
+};
+
+// En-têtes créés automatiquement si un onglet v2 manque.
+var HEADERS = {
+  Mouvements: ['bloc_id', 'ordre', 'mouvement', 'reps', 'charge_kg', 'nb_db', 'unite', 'charge_prog'],
+  Athletes: ['nom', 'sexe']
 };
 
 // Colonnes à garder en texte brut (sinon Sheets transforme "7:09" en heure ou "2026-11-09" en date).
 var TEXT_COLS = ['id', 'date_prog', 'date_faite', 'date', 'heure', 'source', 'statut', 'nom', 'type_bloc',
   'description', 'type_score', 'score_affiche', 'niveau', 'charges', 'km_detail', 'cal_detail', 'notes',
-  'sport', 'fichier', 'bloc_id', 'rx', 'moi', 'cle'];
+  'sport', 'fichier', 'bloc_id', 'rx', 'moi', 'cle', 'mouvement', 'unite', 'sexe', 'valeur'];
 
 function creerCodeSecret() {
   var token = Utilities.getUuid().replace(/-/g, '').slice(0, 24);
@@ -40,13 +48,32 @@ function json_(obj) {
 
 function sheet_(name) {
   if (!SHEETS[name]) throw new Error('Onglet inconnu : ' + name);
-  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(name);
+  if (!sh && HEADERS[name]) {
+    sh = ss.insertSheet(name);
+    sh.getRange(1, 1, 1, HEADERS[name].length).setValues([HEADERS[name]]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+  }
   if (!sh) throw new Error('Onglet introuvable dans le Sheet : ' + name);
   return sh;
 }
 
 function headers_(sh) {
   return sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+}
+
+// Ajoute une colonne d'en-tête si elle manque (ex. "nom" dans Classements).
+function ensureCol_(sh, col) {
+  var h = headers_(sh);
+  if (h.indexOf(col) >= 0) return h;
+  sh.getRange(1, h.length + 1).setValue(col).setFontWeight('bold');
+  return headers_(sh);
+}
+
+function readOptional_(name) {
+  var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+  return sh ? readSheet_(name) : [];
 }
 
 function cellOut_(v) {
@@ -116,9 +143,10 @@ function remove_(name, id) {
   return { deleted: 0 };
 }
 
-function replaceClassement_(blocId, rows) {
-  var sh = sheet_('Classements');
-  var h = headers_(sh);
+// Remplace toutes les lignes d'un bloc dans un onglet sans clé unique (Classements, Mouvements).
+function replaceRows_(name, blocId, rows) {
+  var sh = sheet_(name);
+  var h = name === 'Classements' ? ensureCol_(sh, 'nom') : headers_(sh);
   var k = h.indexOf('bloc_id');
   var last = sh.getLastRow();
   if (last >= 2) {
@@ -132,6 +160,8 @@ function replaceClassement_(blocId, rows) {
   return { bloc_id: blocId, rows: (rows || []).length };
 }
 
+function replaceClassement_(blocId, rows) { return replaceRows_('Classements', blocId, rows); }
+
 function doGet(e) {
   try {
     checkToken_(e.parameter.token);
@@ -139,10 +169,13 @@ function doGet(e) {
       seances: readSheet_('Seances'),
       strava: readSheet_('Strava'),
       classements: readSheet_('Classements'),
+      mouvements: readOptional_('Mouvements'),
+      athletes: readOptional_('Athletes'),
       reglages: {}
     };
     readSheet_('Reglages').forEach(function (r) { if (r.cle) data.reglages[r.cle] = r.valeur; });
     data.lu_le = new Date().toISOString();
+    data.version_passerelle = 2;
     return json_({ ok: true, data: data });
   } catch (err) {
     return json_({ ok: false, erreur: String(err.message || err) });
@@ -161,6 +194,8 @@ function doPost(e) {
       case 'delete': result = remove_(body.sheet, body.id); break;
       case 'classement': result = replaceClassement_(body.bloc_id, body.rows); break;
       case 'reglage': result = upsert_('Reglages', { cle: body.cle, valeur: body.valeur }); break;
+      case 'mouvements': result = replaceRows_('Mouvements', body.bloc_id, body.rows); break;
+      case 'athlete': result = upsert_('Athletes', { nom: body.nom, sexe: body.sexe }); break;
       default: throw new Error('Action inconnue : ' + body.action);
     }
     return json_({ ok: true, result: result });
