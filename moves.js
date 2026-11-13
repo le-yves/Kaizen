@@ -124,7 +124,7 @@
     var lines = text.split('\n').map(cleanLine);
     var out = [], sec = [], mult = 1, alternate = /altern/i.test(text), alternating = false, scheme = null, amrap = false;
     var intervals = /interval\s*b/i.test(text) && /altern/i.test(desc || ''), curInterval = null;
-    var progression = null, everySec = false;
+    var progression = null, everySec = false, schemeList = null;
     var lettered = (text.match(/^\s*[a-e]\)/gim) || []).length;
 
     function flushSection() {
@@ -180,7 +180,7 @@
       } else if (fixedReps != null) {
         o.perRound = fixedReps;
       } else if (scheme && !o.max) {
-        o.perRound = scheme; o.schemeApplied = true;
+        o.perRound = scheme; o.schemeApplied = true; o.schemeList = schemeList;
       }
       // « Row, 2000 m » ou « Ski Erg Calories »
       if (!o.resUnit && (m = body.match(/,\s*(\d+(?:[.,]\d+)?)\s*(m|km)\b/i)) && o.unit === 'reps') { o.unit = 'm'; o.perRound = num(m[1]) * (m[2].toLowerCase() === 'km' ? 1000 : 1); }
@@ -221,7 +221,7 @@
         var lo = lineToMove(m[2], null); if (lo) { lo.max = true; lo.perRound = null; lo.ladder = m[1].replace(/\s/g, ''); addMove(lo); } return;
       }
       if ((m = l.match(/^(\d+(?:\s*-\s*\d+){1,})\s*(?:reps?)?\s*(?:of|de|for time)?\s*:?\s*$/i)) || (m = l.match(/^(\d+(?:-\d+){2,})\s*(?:reps?\b|of\b|:|$)/i))) {
-        scheme = m[1].split('-').map(Number).reduce(function (a, b) { return a + b; }, 0); mult = 1; return;
+        schemeList = m[1].split('-').map(Number); scheme = schemeList.reduce(function (a, b) { return a + b; }, 0); mult = 1; return;
       }
       if ((m = l.match(/^(\d+)\s*rounds?\s*of\s*(dumbbell |db )?(cindy|cindies|dts?|fran)\b(.*)$/i))) {
         var key = (/^c/i.test(m[3]) ? 'cindy' : /^f/i.test(m[3]) ? 'fran' : 'dt'); if (m[2] && key === 'dt') key = 'db dt';
@@ -272,6 +272,12 @@
         return;
       }
       if (SKIP.test(l)) return;
+      // « 5x5 Back squat », « 5 x 3 Deadlift », « 3 x 400 m run » : séries × reps.
+      if ((m = l.match(/^(\d+)\s*[x×]\s*(\d+(?:\s*[-–]\s*\d+)?\s*(?:m\b|cal\b)?\s*[a-z].*)$/i)) && !/^\d+\s*[x×]\s*\[/.test(l)) {
+        var sx = lineToMove(m[2], null);
+        if (sx) { addMove(sx, isLettered); sx.mult = num(m[1]); }
+        return;
+      }
       // « 4x [ 1 A + 1 B + 1 C ] | 70 kg »
       if ((m = l.match(/^(\d+)\s*x\s*\[\s*(.+?)\s*\](.*)$/i))) {
         var times = num(m[1]), tail = m[3] || '', fixed = /\|/.test(tail);
@@ -329,10 +335,12 @@
     out.forEach(function (mv, i) {
       var reps = mv.perRound != null ? Math.round(mv.perRound * mv.mult) : null;
       var nb = defaultDb(mv.c, mv.perSide);
-      var rounds = !mv.fixed && !mv.goal && !mv.fromScore && mv.mult >= 2 && mv.mult <= 12 && Math.round(mv.mult) === mv.mult ? mv.mult : null;
+      var rounds = !mv.fixed && !mv.goal && !mv.fromScore && mv.mult >= 2 && mv.mult <= 30 && Math.round(mv.mult) === mv.mult ? mv.mult : null;
+      var perRounds = null;
+      if (mv.schemeApplied && mv.schemeList && mv.mult === 1 && mv.schemeList.length > 1) { rounds = mv.schemeList.length; perRounds = mv.schemeList.slice(); }
       var options = mv.options ? mv.options.map(function (op) { return { name: display(op.c), key: op.c, perRound: op.perRound, load: op.load, unit: op.unit, machine: op.machine || null, nbDb: defaultDb(op.c, op.perSide) }; }) : null;
       res.push({
-        rounds: rounds, perRound: mv.perRound, options: options, choice: mv.options ? mv.choice : null,
+        rounds: rounds, perRound: mv.perRound, perRounds: perRounds, options: options, choice: mv.options ? mv.choice : null,
         ordre: i + 1, key: mv.c, name: display(mv.c), reps: reps, load: mv.load, nbDb: nb, unit: mv.unit, machine: mv.machine || null,
         range: mv.range, max: mv.max && !mv.fromScore, ladder: mv.ladder || null, avgLoad: !!mv.avgLoad, pct: mv.pct || null, perSide: mv.perSide, raw: mv.raw,
         hint: (mv.ubk ? 'unbroken · ' : '') + (mv.options ? 'au choix' + (mv.range ? ' · fourchette ' + mv.range : '') : mv.ladder ? 'échelle ' + mv.ladder + '… : reps à saisir' : mv.goal ? 'total visé par la prog' : mv.range ? 'fourchette ' + mv.range + ' par round' : mv.max && !mv.fromScore ? 'max : reps à saisir' : mv.fromScore ? 'repris du score' : mv.perSide ? mv.raw.match(/^\d+\s*\/\s*\d+/)[0].replace(/\s/g, '') + ' = par côté' : mv.avgLoad ? 'charge moyenne de la progression' : mv.pct ? mv.pct + ' % RM' : '')
@@ -353,7 +361,12 @@
 
   // Tonnage d'un mouvement : reps × charge × nombre d'haltères.
   function kgOf(m) {
-    if (m.unit !== 'reps' || !m.reps || !m.load) return 0;
+    if (m.unit !== 'reps' || !m.reps) return 0;
+    // Charge par round : somme des reps × charge de chaque round.
+    if (m.perRounds && m.perLoads && m.perLoads.some(function (x) { return x != null; })) {
+      return m.perRounds.reduce(function (s, r, i) { var l = m.perLoads[i] != null ? m.perLoads[i] : m.load; return s + (r && l ? r * l : 0); }, 0) * (m.nbDb || 1);
+    }
+    if (!m.load) return 0;
     return m.reps * m.load * (m.nbDb || 1);
   }
 

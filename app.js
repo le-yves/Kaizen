@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.1.0';
+  var VERSION = '2.2.1';
   var CFG_KEY = 'kaizen.config';
   var UI_KEY = 'kaizen.ui';
   var PHOTO_KEY = 'kaizen.photo';
@@ -176,7 +176,8 @@
     var movBy = {};
     (raw.mouvements || []).forEach(function (r) {
       (movBy[r.bloc_id] = movBy[r.bloc_id] || []).push({ ordre: num(r.ordre) || 0, name: String(r.mouvement || ''), key: MV.canon(r.mouvement), reps: num(r.reps), load: num(r.charge_kg), nbDb: num(r.nb_db), unit: r.unite || 'reps', presc: num(r.charge_prog), machine: MV.machineOf(MV.canon(r.mouvement)),
-        perRounds: r.reps_rounds ? String(r.reps_rounds).split(';').map(num) : null });
+        perRounds: r.reps_rounds ? String(r.reps_rounds).split(';').map(num) : null,
+        perLoads: r.charges_rounds ? String(r.charges_rounds).split(';').map(num) : null });
     });
     Object.keys(movBy).forEach(function (k) { movBy[k].sort(function (a, b) { return a.ordre - b.ordre; }); });
     var sexOf = {};
@@ -669,10 +670,19 @@
   }
 
   // ---------- Saisie du score ----------
-  function cloneMoves(list) {
+  // Faut-il une charge par round ? Oui pour l'haltéro, les blocs notés en charge et tout mouvement lesté.
+  function needsLoad(m, b) {
+    if (m.unit !== 'reps') return false;
+    if (m.load != null || m.presc != null || /\b(db|kb)\b/i.test(m.key || m.name || '')) return true;
+    if (b && (b.type_bloc === 'haltero' || b.type_score === 'charge')) return true;
+    return RE.lift.test(m.name || '') && !RE.gym.test(m.name || '');
+  }
+  function cloneMoves(list, b) {
     return list.map(function (m) {
       var pr = m.perRounds ? m.perRounds.slice() : m.rounds ? Array.apply(null, Array(m.rounds)).map(function () { return m.perRound; }) : null;
-      return { name: m.name, key: m.key, reps: m.reps, load: m.load, presc: m.presc != null ? m.presc : m.load, nbDb: m.nbDb, unit: m.unit, machine: m.machine, hint: m.hint || '', range: m.range, max: m.max,
+      var pl = m.perLoads && pr ? m.perLoads.slice(0, pr.length) : pr && needsLoad(m, b) ? pr.map(function () { return m.load != null ? m.load : null; }) : null;
+      if (pl) while (pl.length < pr.length) pl.push(m.load != null ? m.load : null);
+      return { perLoads: pl, name: m.name, key: m.key, reps: m.reps, load: m.load, presc: m.presc != null ? m.presc : m.load, nbDb: m.nbDb, unit: m.unit, machine: m.machine, hint: m.hint || '', range: m.range, max: m.max,
         rounds: pr ? pr.length : null, perRound: m.perRound, perRounds: pr, options: m.options || null, choice: m.choice != null ? m.choice : null };
     });
   }
@@ -690,7 +700,7 @@
     var parsed = MV.parse(b.description, { reg: M.reg, sex: M.reg.sexe || 'H', version: lvl, score: b.score_valeur, scoreType: b.type_score });
     var mv = b.done && M.mov[id] ? withOptions(M.mov[id], parsed) : parsed;
     var t = iso(today());
-    F = { id: id, level: lvl, kind: b.type_score || 'temps', rpe: b.rpe_ressenti || null, date: b.date_faite || (t < b.date_prog ? b.date_prog : t), moves: cloneMoves(mv), edited: !!(b.done && M.mov[id]), vals: {} };
+    F = { id: id, level: lvl, kind: b.type_score || 'temps', rpe: b.rpe_ressenti || null, date: b.date_faite || (t < b.date_prog ? b.date_prog : t), moves: cloneMoves(mv, b), edited: !!(b.done && M.mov[id]), vals: {} };
     drawScore();
   }
   function scoreInputs(b) {
@@ -699,12 +709,29 @@
     switch (F.kind) {
       case 'temps': return '<div class="field"><span class="label">Temps</span><div class="row"><input class="input big" id="s-min" aria-label="Minutes" inputmode="numeric" placeholder="min" value="' + esc(val('s-min', v != null ? Math.floor(v / 60) : '')) + '" style="width:96px"><span class="num" style="font-size:30px">:</span><input class="input big" id="s-sec" aria-label="Secondes" inputmode="numeric" placeholder="s" value="' + esc(val('s-sec', v != null ? pad(Math.round(v % 60)) : '')) + '" style="width:96px"></div></div>';
       case 'rounds_reps': return '<div class="grid2"><div class="field"><label for="s-r">Rounds</label><input class="input big" id="s-r" inputmode="numeric" value="' + esc(val('s-r', v != null ? Math.floor(v) : '')) + '"></div><div class="field"><label for="s-p">Reps en plus</label><input class="input big" id="s-p" inputmode="numeric" value="' + esc(val('s-p', v != null ? Math.round((v - Math.floor(v)) * 1000) : '')) + '"></div></div>';
-      case 'charge': return '<div class="field"><label for="s-kg">Charge (kg)</label><input class="input big" id="s-kg" inputmode="decimal" value="' + esc(val('s-kg', v != null ? String(v).replace('.', ',') : '')) + '"></div>';
+      case 'charge':
+        var hv = heaviest();
+        if (hv != null || V['s-kg'] == null) return '<div class="field"><span class="label">Charge (kg)</span><div class="row" style="gap:10px;align-items:baseline"><span class="num" id="s-kg-auto" style="font-size:40px">' + (hv != null ? esc(fmtNum(hv)) : '–') + '</span><span class="muted">kg</span></div><span class="small muted">Calculée : ta charge la plus lourde du bloc, d’après les charges par round ci-dessous.</span></div>';
+        return '<div class="field"><label for="s-kg">Charge (kg)</label><input class="input big" id="s-kg" inputmode="decimal" value="' + esc(val('s-kg', v != null ? String(v).replace('.', ',') : '')) + '"></div>';
       case 'reps': return '<div class="field"><label for="s-reps">Total de reps</label><input class="input big" id="s-reps" inputmode="numeric" value="' + esc(val('s-reps', v != null ? v : '')) + '"></div>';
       case 'distance': return '<div class="field"><label for="s-m">Distance (m)</label><input class="input big" id="s-m" inputmode="numeric" value="' + esc(val('s-m', v != null ? v : '')) + '"></div>';
       default: return '<div class="row ok" style="font-weight:600">' + icon(I.check).replace('<svg', '<svg style="width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:3"') + 'Bloc validé (completed)</div>';
     }
   }
+  // Charge la plus lourde saisie dans le bloc (barre ou haltère, pas les machines).
+  function heaviest() {
+    var mx = null;
+    F.moves.forEach(function (m) {
+      if (m.unit !== 'reps') return;
+      (m.perLoads || []).concat([m.perLoads ? null : m.load]).forEach(function (l, k) {
+        if (l == null) return;
+        if (m.perLoads && m.perRounds && k < m.perRounds.length && !m.perRounds[k]) return;
+        if (mx == null || l > mx) mx = l;
+      });
+    });
+    return mx;
+  }
+  function refreshCharge() { var el = $('#s-kg-auto'); if (el) { var h = heaviest(); el.textContent = h != null ? fmtNum(h) : '–'; } }
   function movesTable() {
     var h = '<div class="field"><div class="between"><span class="label">Reps et charges par mouvement</span>' + (F.moves.some(function (m) { return m.range || m.max; }) ? '<span class="small amber">à compléter</span>' : '') + '</div>';
     if (!F.moves.length) h += '<span class="small muted">Aucun mouvement reconnu dans ce bloc. Ajoute-les si tu veux qu’ils comptent dans tes reps et tes kg.</span>';
@@ -714,10 +741,14 @@
       var changed = m.presc != null && m.load != null && m.load !== m.presc;
       var unitLbl = m.unit === 'cal' ? 'cal' : m.unit === 'm' ? 'm' : m.unit === 's' ? 's' : '';
       var opts = m.options && m.options.length > 1 ? '<div class="mv-opts seg" role="group" aria-label="Mouvement au choix">' + m.options.map(function (o, j) { return '<button type="button" data-act="fopt" data-i="' + i + '" data-v="' + j + '" aria-pressed="' + (m.choice === j) + '">' + (o.perRound != null ? o.perRound + ' ' : '') + esc(o.name) + '</button>'; }).join('') + '</div>' : '';
-      var rounds = m.perRounds ? '<div class="mv-rounds"><span class="small muted">Par round</span>' + m.perRounds.map(function (v, k) { return '<label class="mv-r"><span>R' + (k + 1) + '</span><input class="input" data-mi="' + i + '" data-f="pr" data-r="' + k + '" inputmode="numeric" value="' + (v != null ? v : '') + '" aria-label="' + esc(m.name) + ' round ' + (k + 1) + '"></label>'; }).join('') + '</div>' : '';
+      var rounds = m.perRounds && m.perLoads ? '<div class="mv-rounds lr"><span class="small muted">Par round · reps × charge</span>' + m.perRounds.map(function (v, k) {
+          var l = m.perLoads[k];
+          return '<div class="mv-rl"><span class="rn">R' + (k + 1) + '</span><input class="input" data-mi="' + i + '" data-f="pr" data-r="' + k + '" inputmode="numeric" value="' + (v != null ? v : '') + '" aria-label="' + esc(m.name) + ' reps round ' + (k + 1) + '"><span class="muted">×</span><input class="input" data-mi="' + i + '" data-f="pl" data-r="' + k + '" inputmode="decimal" value="' + (l != null ? String(l).replace('.', ',') : '') + '" placeholder="kg" aria-label="' + esc(m.name) + ' charge round ' + (k + 1) + '"><span class="small muted">kg</span></div>';
+        }).join('') + '</div>'
+        : m.perRounds ? '<div class="mv-rounds"><span class="small muted">Par round</span>' + m.perRounds.map(function (v, k) { return '<label class="mv-r"><span>R' + (k + 1) + '</span><input class="input" data-mi="' + i + '" data-f="pr" data-r="' + k + '" inputmode="numeric" value="' + (v != null ? v : '') + '" aria-label="' + esc(m.name) + ' round ' + (k + 1) + '"></label>'; }).join('') + '</div>' : '';
       var repsCell = m.perRounds ? '<div class="mv-in mv-tot"><b id="mvt-' + i + '">' + (m.reps != null ? m.reps : '–') + '</b>' + (unitLbl ? '<span class="small muted">' + unitLbl + '</span>' : '<span class="small muted">total</span>') + '</div>'
         : '<div class="mv-in"><input class="input" data-mi="' + i + '" data-f="reps" inputmode="numeric" value="' + (m.reps != null ? m.reps : '') + '" aria-label="Reps ' + esc(m.name) + '"' + (unitLbl ? ' placeholder="' + unitLbl + '"' : '') + '>' + (unitLbl ? '<span class="small muted">' + unitLbl + '</span>' : '') + '</div>';
-      var loadCell = m.unit === 'reps' ? '<input class="input" data-mi="' + i + '" data-f="load" inputmode="decimal" value="' + (m.load != null ? String(m.load).replace('.', ',') : '') + '" placeholder="—" aria-label="Charge ' + esc(m.name) + '">' : m.machine ? '<span class="small muted" style="padding-left:6px">machine</span>' : '<span class="small muted" style="padding-left:6px">—</span>';
+      var loadCell = m.unit === 'reps' ? '<input class="input" data-mi="' + i + '" data-f="load" inputmode="decimal" value="' + (m.load != null ? String(m.load).replace('.', ',') : '') + '" placeholder="' + (m.perLoads ? 'tous' : '—') + '" aria-label="Charge ' + esc(m.name) + (m.perLoads ? ' pour tous les rounds' : '') + '">' : m.machine ? '<span class="small muted" style="padding-left:6px">machine</span>' : '<span class="small muted" style="padding-left:6px">—</span>';
       return '<div class="mv">' +
         '<div class="mv-name">' + (m.isNew ? '<input class="input" data-mi="' + i + '" data-f="name" value="' + esc(m.name) + '" placeholder="ex. Wall ball" aria-label="Nom du mouvement">' : '<b>' + esc(m.name) + '</b>') +
         (m.hint ? '<span class="small ' + (m.range || m.max ? 'amber' : 'muted') + '">' + esc(m.hint) + '</span>' : '') + (changed ? '<span class="small amber">charge modifiée · prog ' + fmtKg(m.presc) + '</span>' : '') + '</div>' +
@@ -771,7 +802,7 @@
     switch (F.kind) {
       case 'temps': var mi = num(g('s-min')) || 0, se = num(g('s-sec')) || 0; if (!mi && !se) return null; r.v = mi * 60 + se; r.d = fmtTime(r.v); break;
       case 'rounds_reps': var rd = num(g('s-r')), rp = num(g('s-p')) || 0; if (rd == null) return null; r.v = rd + rp / 1000; r.d = rd + ' rds' + (rp ? ' + ' + rp : ''); break;
-      case 'charge': var kg = num(g('s-kg')); if (kg == null) return null; r.v = kg; r.d = fmtKg(kg); break;
+      case 'charge': var kg = num(g('s-kg')); if (kg == null) kg = heaviest(); if (kg == null) return null; r.v = kg; r.d = fmtKg(kg); break;
       case 'reps':
         var n = num(g('s-reps'));
         if (n == null) { var tot = F.moves.reduce(function (s, m) { return s + (m.unit === 'reps' && m.reps ? m.reps : 0); }, 0); if (!tot) return null; n = tot; }
@@ -790,7 +821,7 @@
       var sc = readScore();
       if (!sc) { var e = $('#s-err'); e.textContent = 'Renseigne ton score avant d’enregistrer.'; e.hidden = false; e.scrollIntoView({ block: 'center' }); return; }
       // AMRAP : sans retouche, les reps de la prog (1 round) sont multipliées par tes rounds.
-      if (F.kind === 'rounds_reps' && !F.edited && sc.v) F.moves = cloneMoves(MV.parse(b.description, { reg: M.reg, sex: M.reg.sexe || 'H', version: F.level, score: sc.v, scoreType: 'rounds_reps' }));
+      if (F.kind === 'rounds_reps' && !F.edited && sc.v) F.moves = cloneMoves(MV.parse(b.description, { reg: M.reg, sex: M.reg.sexe || 'H', version: F.level, score: sc.v, scoreType: 'rounds_reps' }), b);
       moves = F.moves.filter(function (m) { return m.name && m.name.trim(); });
       var cal = {}, km = {};
       moves.forEach(function (m) {
@@ -810,7 +841,7 @@
       } else if (!row.participants && board.length) row.participants = board.length + (row.rang ? 0 : 1);
     }
     var btn = $('[data-act="fsave"]'); if (btn) btn.disabled = true;
-    var mvRows = moves ? moves.map(function (m, i) { return { ordre: i + 1, mouvement: m.name.trim(), reps: m.reps != null ? m.reps : '', charge_kg: m.unit === 'reps' && m.load != null ? m.load : '', nb_db: m.nbDb || '', unite: m.unit || 'reps', charge_prog: m.presc != null ? m.presc : '', reps_rounds: m.perRounds ? m.perRounds.map(function (v) { return v == null ? '' : v; }).join(';') : '' }; }) : null;
+    var mvRows = moves ? moves.map(function (m, i) { return { ordre: i + 1, mouvement: m.name.trim(), reps: m.reps != null ? m.reps : '', charge_kg: m.unit === 'reps' ? (m.perLoads && m.perLoads.some(function (x) { return x != null; }) ? Math.max.apply(null, m.perLoads.filter(function (x) { return x != null; })) : m.load != null ? m.load : '') : '', nb_db: m.nbDb || '', unite: m.unit || 'reps', charge_prog: m.presc != null ? m.presc : '', reps_rounds: m.perRounds ? m.perRounds.map(function (v) { return v == null ? '' : v; }).join(';') : '', charges_rounds: m.perLoads ? m.perLoads.map(function (v) { return v == null ? '' : v; }).join(';') : '' }; }) : null;
     var warnGw = false;
     apiPost({ action: 'upsert', sheet: 'Seances', row: row }).then(function () {
       if (!mvRows) return;
@@ -1205,8 +1236,17 @@
           var known = m.perRounds.filter(function (v) { return v != null; });
           m.reps = known.length ? known.reduce(function (a, b) { return a + b; }, 0) : null;
           var t = $('#mvt-' + inp.dataset.mi); if (t) t.textContent = m.reps != null ? m.reps : '–';
+          refreshCharge();
         }
-        else m[f] = num(inp.value);
+        else if (f === 'pl') { m.perLoads[+inp.dataset.r] = num(inp.value); refreshCharge(); }
+        else if (f === 'load' && m.perLoads) {
+          // La charge de la ligne remplit tous les rounds ; on ajuste ensuite round par round.
+          m.load = num(inp.value);
+          m.perLoads = m.perLoads.map(function () { return m.load; });
+          $$('[data-f="pl"][data-mi="' + inp.dataset.mi + '"]').forEach(function (x) { x.value = inp.value; });
+          refreshCharge();
+        }
+        else { m[f] = num(inp.value); if (f === 'load') refreshCharge(); }
       };
     });
   }
@@ -1254,7 +1294,7 @@
       case 'flvl':
         captureScore(); F.level = v;
         if (!F.kindTouched) { var b0 = M.byId[F.id], am = /amrap/i.test(MV.section(b0.description, v)); F.kind = am && b0.type_score !== 'rounds_reps' && !/amrap/i.test(MV.section(b0.description, 'RX')) ? 'rounds_reps' : (b0.type_score || F.kind); }
-        if (!F.edited) { var b = M.byId[F.id]; F.moves = cloneMoves(MV.parse(b.description, { reg: M.reg, sex: M.reg.sexe || 'H', version: v, score: b.score_valeur, scoreType: F.kind })); }
+        if (!F.edited) { var b = M.byId[F.id]; F.moves = cloneMoves(MV.parse(b.description, { reg: M.reg, sex: M.reg.sexe || 'H', version: v, score: b.score_valeur, scoreType: F.kind }), b); }
         drawScore(); break;
       case 'fkind': captureScore(); F.kind = v; F.kindTouched = true; drawScore(); break;
       case 'fopt':

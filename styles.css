@@ -211,3 +211,8 @@ details summary { color: var(--ink-2); }
 .mv-r { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; color: var(--muted); }
 .mv-r .input { width: 52px; min-height: 38px; padding: 4px; text-align: center; font-weight: 700; }
 .mv-tot b { font-family: var(--display); font-size: 22px; min-width: 40px; text-align: center; }
+/* v2.2 : reps × charge par round */
+.mv-rounds.lr { flex-direction: column; align-items: stretch; gap: 6px; }
+.mv-rl { display: grid; grid-template-columns: 28px 64px 14px 84px auto; align-items: center; gap: 6px; }
+.mv-rl .rn { font-size: 12px; font-weight: 700; color: var(--muted); }
+.mv-rl .input { min-height: 40px; padding: 4px 6px; text-align: center; font-weight: 700; }

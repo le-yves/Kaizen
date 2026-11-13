@@ -20,14 +20,14 @@ var SHEETS = {
 
 // En-têtes créés automatiquement si un onglet v2 manque.
 var HEADERS = {
-  Mouvements: ['bloc_id', 'ordre', 'mouvement', 'reps', 'charge_kg', 'nb_db', 'unite', 'charge_prog', 'reps_rounds'],
+  Mouvements: ['bloc_id', 'ordre', 'mouvement', 'reps', 'charge_kg', 'nb_db', 'unite', 'charge_prog', 'reps_rounds', 'charges_rounds'],
   Athletes: ['nom', 'sexe']
 };
 
 // Colonnes à garder en texte brut (sinon Sheets transforme "7:09" en heure ou "2026-11-09" en date).
 var TEXT_COLS = ['id', 'date_prog', 'date_faite', 'date', 'heure', 'source', 'statut', 'nom', 'type_bloc',
   'description', 'type_score', 'score_affiche', 'niveau', 'charges', 'km_detail', 'cal_detail', 'notes',
-  'sport', 'fichier', 'bloc_id', 'rx', 'moi', 'cle', 'mouvement', 'unite', 'sexe', 'valeur', 'reps_rounds'];
+  'sport', 'fichier', 'bloc_id', 'rx', 'moi', 'cle', 'mouvement', 'unite', 'sexe', 'valeur', 'reps_rounds', 'charges_rounds'];
 
 function creerCodeSecret() {
   var token = Utilities.getUuid().replace(/-/g, '').slice(0, 24);
@@ -146,7 +146,7 @@ function remove_(name, id) {
 // Remplace toutes les lignes d'un bloc dans un onglet sans clé unique (Classements, Mouvements).
 function replaceRows_(name, blocId, rows) {
   var sh = sheet_(name);
-  var h = name === 'Classements' ? ensureCol_(sh, 'nom') : name === 'Mouvements' ? ensureCol_(sh, 'reps_rounds') : headers_(sh);
+  var h = name === 'Classements' ? ensureCol_(sh, 'nom') : name === 'Mouvements' ? (ensureCol_(sh, 'reps_rounds'), ensureCol_(sh, 'charges_rounds')) : headers_(sh);
   var k = h.indexOf('bloc_id');
   var last = sh.getLastRow();
   if (last >= 2) {
