@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.2.1';
+  var VERSION = '2.3.2';
   var CFG_KEY = 'kaizen.config';
   var UI_KEY = 'kaizen.ui';
   var PHOTO_KEY = 'kaizen.photo';
@@ -112,7 +112,8 @@
   var ENDU = { 'Course': 'run', 'Rameur': 'row', 'SkiErg': 'ski', 'Vélo': 'bike', 'Vélo indoor': 'bike', 'Natation': 'swim', 'Randonnée': 'other', 'Paddle': 'other', 'Snowboard': 'other' };
   var MACHINE_LABEL = { run: 'Run', row: 'Row', ski: 'Ski', bike: 'Bike', echo: 'Echo bike', swim: 'Natation', other: 'Autre' };
   var VERSIONS = ['RX', 'Inter', 'Rookie'];
-  var SCORE_TYPES = { temps: 'Temps', reps: 'Reps', valide: 'Completed', charge: 'Charge', rounds_reps: 'Rounds + reps', distance: 'Distance' };
+  var SCORE_TYPES = { temps: 'Temps', temps_tours: 'Temps / tour', reps: 'Reps', valide: 'Completed', charge: 'Charge', rounds_reps: 'Rounds + reps', distance: 'Distance' };
+  function isTime(t) { return t === 'temps' || t === 'temps_tours'; }
   function lvlBucket(n) { return n === 'RX' || !n ? 'RX' : 'Rookie'; }
 
   function splitBloc(b) {
@@ -141,13 +142,18 @@
 
   function estimateDuration(b, scoreSec) {
     if (scoreSec) return Math.max(1, Math.round(scoreSec / 60));
+    if (num(b.duree_min)) return num(b.duree_min);
     var t = (b.description || '') + ' ' + (b.nom || '');
     var m = t.match(/every\s*(\d+)\s*['’]?\s*(?:min\w*)?\s*[x×]\s*(\d+)/i);
     if (m) return (+m[1]) * (+m[2]);
     m = t.match(/(?:amrap|emom)\s*(\d+)/i); if (m) return +m[1];
     m = t.match(/every\s*[\d:]+\s*\w*\s*for\s*(\d+)/i); if (m) return +m[1];
-    var r = t.match(/(\d+)\s*rounds?/i), rest = t.match(/rest\s*(\d+)(?:['’:](\d+))?/i);
-    if (r) { var restMin = rest ? (+rest[1]) + (rest[2] ? (+rest[2]) / 60 : 0) : 1; return Math.round((+r[1]) * (1.5 + restMin)); }
+    var r = t.match(/(\d+)\s*rounds?/i), rest = t.match(/rest\s*(\d+)\s*(''|"|s\b|['’:](\d+)?)?/i);
+    if (r) {
+      // « Rest 30'' » = 30 secondes, « Rest 1'30 » = 1 min 30.
+      var restMin = !rest ? 1 : (rest[2] === "''" || rest[2] === '"' || /^s/i.test(rest[2] || '')) ? (+rest[1]) / 60 : (+rest[1]) + (rest[3] ? (+rest[3]) / 60 : 0);
+      return Math.max(1, Math.round((+r[1]) * (1.5 + restMin)));
+    }
     return num(b.duree_min) || 12;
   }
 
@@ -160,6 +166,7 @@
       o.rpe_vise = num(r.rpe_vise); o.rpe_ressenti = num(r.rpe_ressenti); o.duree_min = num(r.duree_min);
       o.date_prog = String(r.date_prog || '').slice(0, 10); o.date_faite = String(r.date_faite || '').slice(0, 10);
       o.done = r.statut === 'fait';
+      o.tours = r.score_tours ? String(r.score_tours).split(';').map(num) : null;
       return o;
     });
     var strava = (raw.strava || []).map(function (r) {
@@ -277,7 +284,7 @@
         }
       });
     });
-    return Object.keys(keys).map(function (k) {
+    var out = Object.keys(keys).map(function (k) {
       var r = keys[k];
       r.att.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
       var dedup = [];
@@ -297,6 +304,15 @@
       });
       return r;
     });
+    // Premier score d'un record (ex. premier 1RM en hang squat clean) : c'est un PR.
+    // Chaque record reste à part : un 1RM ne se compare jamais à un 2RM.
+    out.forEach(function (r) {
+      Object.keys(r.byLevel).forEach(function (lvl) {
+        var L = r.byLevel[lvl], first = L.att[0];
+        if (first && L.prs.indexOf(first) < 0) { first.isFirst = true; L.prs.unshift(first); }
+      });
+    });
+    return out;
   }
   function recordValue(r, v, a) {
     if (r.unit === 'open') { var x = a || (r.byLevel.RX && r.byLevel.RX.att.concat(r.byLevel.Rookie ? r.byLevel.Rookie.att : []).find(function (y) { return y.value === v; })); return x ? String(x.display || '').replace(/^(\d+)\s*reps$/, '$1 reps') : fmtNum(v); }
@@ -339,7 +355,7 @@
     if (light) return res;
     var minutes = 0, split = { haltero: 0, gym: 0, cardio: 0, renfo: 0 };
     done.forEach(function (s) {
-      var d = s.duree_min || estimateDuration(s, s.type_score === 'temps' ? s.score_valeur : null);
+      var d = s.duree_min || estimateDuration(s, s.type_score === 'temps' ? s.score_valeur : s.type_score === 'temps_tours' && s.tours ? s.tours.reduce(function (a, x) { return a + (x || 0); }, 0) : null);
       minutes += d;
       var sp = splitBloc(s);
       Object.keys(sp).forEach(function (k) { split[k] += sp[k] * d; });
@@ -495,7 +511,7 @@
     h += '<section class="card" style="gap:10px"><div class="between"><h2 class="label">PR ' + (isWeek ? 'de la semaine' : 'du mois') + '</h2><a class="small" href="#pr" style="font-weight:600">Tous mes PR</a></div>';
     if (st.prs.length) {
       h += '<div class="stack" style="gap:2px">' + st.prs.slice(0, 6).map(function (p) {
-        return '<button class="li" style="padding:6px 0;min-height:0" data-act="openpr" data-v="' + esc(p.r.key) + '" data-l="' + p.lvl + '"><span class="t"><b>' + esc(recordTitle(p.r)) + '</b><span>' + fmtDayMid(p.a.date) + (p.tie ? ' · égalé' : p.a.prev ? ' · avant ' + esc(recordValue(p.r, p.a.prev.value, p.a.prev)) : '') + (p.lvl === 'Rookie' ? ' · ' + esc(p.a.niveau || 'Rookie') : '') + '</span></span><span class="v red" style="font-size:24px">' + esc(recordValue(p.r, p.a.value, p.a)) + '</span></button>';
+        return '<button class="li" style="padding:6px 0;min-height:0" data-act="openpr" data-v="' + esc(p.r.key) + '" data-l="' + p.lvl + '"><span class="t"><b>' + esc(recordTitle(p.r)) + '</b><span>' + fmtDayMid(p.a.date) + (p.tie ? ' · égalé' : p.a.isFirst ? ' · premier ' + esc(p.r.detail || 'score') : p.a.prev ? ' · avant ' + esc(recordValue(p.r, p.a.prev.value, p.a.prev)) : '') + (p.lvl === 'Rookie' ? ' · ' + esc(p.a.niveau || 'Rookie') : '') + '</span></span><span class="v red" style="font-size:24px">' + esc(recordValue(p.r, p.a.value, p.a)) + '</span></button>';
       }).join('') + '</div>';
     } else {
       var left = isCur ? (isWeek ? 6 - ((today().getDay() + 6) % 7) : r.b.getDate() - today().getDate()) : 0;
@@ -525,7 +541,7 @@
   function gapToFirst(s) {
     var c = (M.cls[s.id] || []).filter(function (x) { return x.moi !== 'oui' && x.score_valeur != null; });
     if (!c.length || s.score_valeur == null || s.type_score === 'valide') return '';
-    var lower = s.type_score === 'temps';
+    var lower = isTime(s.type_score);
     var best = c.reduce(function (b, x) { return b == null || (lower ? x.score_valeur < b : x.score_valeur > b) ? x.score_valeur : b; }, null);
     var diff = s.score_valeur - best;
     if ((lower && diff <= 0) || (!lower && diff >= 0)) return '1er';
@@ -586,6 +602,10 @@
       if (sa) extra.push(['FC moy / max', sa.fc_moy + (sa.fc_max ? ' / ' + sa.fc_max : '')]);
       var g = gapToFirst(b); if (g) extra.push(['Écart au 1er', esc(g.replace(' sur le 1er', ''))]);
       if (extra.length) h += '<div class="grid3 small muted">' + extra.map(function (e) { return '<div class="stack" style="gap:2px"><span>' + e[0] + '</span><b style="font-size:14px;color:var(--ink)">' + e[1] + '</b></div>'; }).join('') + '</div>';
+      if (b.type_score === 'temps_tours' && b.tours && b.tours.length) {
+        var tk = b.tours.filter(function (x) { return x != null; });
+        h += '<div class="small muted">Tours : <b style="color:var(--ink)">' + b.tours.map(function (x) { return x != null ? fmtTime(x) : '–'; }).join(' · ') + '</b>' + (tk.length > 1 ? ' · moyenne ' + fmtTime(tk.reduce(function (x, y) { return x + y; }, 0) / tk.length) + ' · écart ' + fmtTime(Math.max.apply(null, tk) - Math.min.apply(null, tk)) : '') + '</div>';
+      }
       if (b.notes) h += '<div class="small muted pre">' + esc(b.notes) + '</div>';
       h += '</div>';
     } else if (b.done) {
@@ -683,7 +703,7 @@
       var pl = m.perLoads && pr ? m.perLoads.slice(0, pr.length) : pr && needsLoad(m, b) ? pr.map(function () { return m.load != null ? m.load : null; }) : null;
       if (pl) while (pl.length < pr.length) pl.push(m.load != null ? m.load : null);
       return { perLoads: pl, name: m.name, key: m.key, reps: m.reps, load: m.load, presc: m.presc != null ? m.presc : m.load, nbDb: m.nbDb, unit: m.unit, machine: m.machine, hint: m.hint || '', range: m.range, max: m.max,
-        rounds: pr ? pr.length : null, perRound: m.perRound, perRounds: pr, options: m.options || null, choice: m.choice != null ? m.choice : null };
+        rounds: pr ? pr.length : null, perRound: m.perRound, timed: !!(m.timed || m.unit === 's'), secRound: m.secRound != null ? m.secRound : (m.unit === 's' ? m.perRound : null), perRounds: pr, options: m.options || null, choice: m.choice != null ? m.choice : null };
     });
   }
   // Mouvements déjà saisis : on leur rend les options « au choix » de la prog.
@@ -699,14 +719,29 @@
     var lvl = b.done ? (b.niveau || 'RX') : (S.ver[id] || M.reg.version_defaut || 'RX');
     var parsed = MV.parse(b.description, { reg: M.reg, sex: M.reg.sexe || 'H', version: lvl, score: b.score_valeur, scoreType: b.type_score });
     var mv = b.done && M.mov[id] ? withOptions(M.mov[id], parsed) : parsed;
+    // Bloc au temps (30'' de travail) : on garde l'info pour pouvoir basculer secondes / reps.
+    if (b.done && M.mov[id]) mv = mv.map(function (m) { var p = parsed.find(function (x) { return x.key === m.key && x.unit === 's'; }); return p && m.unit !== 's' ? Object.assign({}, m, { timed: true, secRound: p.perRound }) : m; });
     var t = iso(today());
     F = { id: id, level: lvl, kind: b.type_score || 'temps', rpe: b.rpe_ressenti || null, date: b.date_faite || (t < b.date_prog ? b.date_prog : t), moves: cloneMoves(mv, b), edited: !!(b.done && M.mov[id]), vals: {} };
     drawScore();
+  }
+  // Nombre de tours d'un bloc : « Every 5' x 5 Rounds », « 4 Rounds », ou rounds des mouvements.
+  function blockRounds(b) {
+    var t = String(b.description || ''), m = t.match(/every\s*[\d:'’]+\s*(?:min\w*)?\s*[x×]\s*(\d+)/i) || t.match(/(?:^|\n)\s*(\d+)\s*(?:rounds?|sets?|tours?)\b/i) || t.match(/emom\s*(\d+)/i);
+    var n = m ? +m[1] : 0;
+    (F && F.moves || []).forEach(function (mv) { if (mv.rounds && mv.rounds > n) n = mv.rounds; });
+    return n > 30 ? 0 : n;
   }
   function scoreInputs(b) {
     var same = F.kind === b.type_score, v = same ? b.score_valeur : null, V = F.vals;
     function val(k, d) { return V[k] != null ? V[k] : d; }
     switch (F.kind) {
+      case 'temps_tours':
+        var nT = F.tours || 0, prev = same && b.tours ? b.tours : [];
+        return '<div class="field"><span class="label">Temps par tour</span><div class="tt-list">' + Array.apply(null, Array(nT)).map(function (x, i) {
+          var pv = prev[i];
+          return '<div class="tt"><span class="rn">' + (i + 1) + '</span><input class="input" id="s-tm-' + i + '" inputmode="numeric" placeholder="min" aria-label="Tour ' + (i + 1) + ' minutes" value="' + esc(val('s-tm-' + i, pv != null ? Math.floor(pv / 60) : '')) + '"><span class="muted">:</span><input class="input" id="s-ts-' + i + '" inputmode="numeric" placeholder="s" aria-label="Tour ' + (i + 1) + ' secondes" value="' + esc(val('s-ts-' + i, pv != null ? pad(Math.round(pv % 60)) : '')) + '"></div>';
+        }).join('') + '</div><div class="row" style="gap:8px"><button type="button" class="chip mini" data-act="ftours" data-v="-1">– tour</button><button type="button" class="chip mini" data-act="ftours" data-v="1">+ tour</button></div><span class="small muted">Comme sur Strivee : minutes et secondes de chaque tour. Le score du bloc est le total de tes tours, comme sur Strivee. L’app affiche aussi ta moyenne et ton écart entre le tour le plus rapide et le plus lent.</span></div>';
       case 'temps': return '<div class="field"><span class="label">Temps</span><div class="row"><input class="input big" id="s-min" aria-label="Minutes" inputmode="numeric" placeholder="min" value="' + esc(val('s-min', v != null ? Math.floor(v / 60) : '')) + '" style="width:96px"><span class="num" style="font-size:30px">:</span><input class="input big" id="s-sec" aria-label="Secondes" inputmode="numeric" placeholder="s" value="' + esc(val('s-sec', v != null ? pad(Math.round(v % 60)) : '')) + '" style="width:96px"></div></div>';
       case 'rounds_reps': return '<div class="grid2"><div class="field"><label for="s-r">Rounds</label><input class="input big" id="s-r" inputmode="numeric" value="' + esc(val('s-r', v != null ? Math.floor(v) : '')) + '"></div><div class="field"><label for="s-p">Reps en plus</label><input class="input big" id="s-p" inputmode="numeric" value="' + esc(val('s-p', v != null ? Math.round((v - Math.floor(v)) * 1000) : '')) + '"></div></div>';
       case 'charge':
@@ -753,6 +788,7 @@
         '<div class="mv-name">' + (m.isNew ? '<input class="input" data-mi="' + i + '" data-f="name" value="' + esc(m.name) + '" placeholder="ex. Wall ball" aria-label="Nom du mouvement">' : '<b>' + esc(m.name) + '</b>') +
         (m.hint ? '<span class="small ' + (m.range || m.max ? 'amber' : 'muted') + '">' + esc(m.hint) + '</span>' : '') + (changed ? '<span class="small amber">charge modifiée · prog ' + fmtKg(m.presc) + '</span>' : '') + '</div>' +
         repsCell + '<div class="mv-in">' + loadCell + '</div>' + opts + rounds +
+        (m.timed ? '<div class="mv-db seg" role="group" aria-label="Compter en secondes ou en reps"><button type="button" data-act="funit" data-i="' + i + '" data-v="s" aria-pressed="' + (m.unit === 's') + '">Secondes</button><button type="button" data-act="funit" data-i="' + i + '" data-v="reps" aria-pressed="' + (m.unit === 'reps') + '">Reps</button></div>' : '') +
         (isDb && m.unit === 'reps' ? '<div class="mv-db seg" role="group" aria-label="Nombre d’haltères"><button type="button" data-act="fdb" data-i="' + i + '" data-v="1" aria-pressed="' + ((m.nbDb || 1) === 1) + '">1 DB</button><button type="button" data-act="fdb" data-i="' + i + '" data-v="2" aria-pressed="' + (m.nbDb === 2) + '">2 DB</button></div>' : '') +
         '<button type="button" class="mv-del" data-act="fmdel" data-i="' + i + '" aria-label="Retirer ' + esc(m.name || 'ce mouvement') + '">' + icon(I.x) + '</button>' +
         '</div>';
@@ -772,6 +808,8 @@
       '<span class="small muted">Le score reste rattaché au jour de la prog pour le classement, et compte dans ta semaine à la date où tu l’as fait.</span></div>';
     h += '<div class="field"><span class="label">Version</span><div class="seg">' + VERSIONS.map(function (v) { return '<button type="button" data-act="flvl" data-v="' + v + '" aria-pressed="' + (F.level === v) + '">' + v + '</button>'; }).join('') + '</div></div>';
     var kinds = ['temps', 'reps', 'valide']; if (kinds.indexOf(b.type_score) < 0 && b.type_score) kinds.push(b.type_score);
+    if (blockRounds(b) > 1 && kinds.indexOf('temps_tours') < 0) kinds.push('temps_tours');
+    if (!F.tours) F.tours = (b.tours && b.tours.length) || blockRounds(b) || 5;
     if (/amrap/i.test(MV.section(b.description, F.level)) && kinds.indexOf('rounds_reps') < 0) kinds.push('rounds_reps');
     if (kinds.indexOf(F.kind) < 0) kinds.push(F.kind);
     h += '<div class="field"><span class="label">Type de score</span><div class="seg">' + kinds.map(function (k) { return '<button type="button" data-act="fkind" data-v="' + k + '" aria-pressed="' + (F.kind === k) + '">' + SCORE_TYPES[k] + '</button>'; }).join('') + '</div>' +
@@ -793,6 +831,7 @@
   }
   // Recopie les champs du formulaire dans F avant un nouveau rendu.
   function captureScore() {
+    for (var ti = 0; ti < (F.tours || 0); ti++) ['s-tm-', 's-ts-'].forEach(function (pfx) { var el = $('#' + pfx + ti); if (el) F.vals[pfx + ti] = el.value; });
     ['s-min', 's-sec', 's-r', 's-p', 's-kg', 's-reps', 's-m', 's-rang', 's-part', 's-duree', 's-notes'].forEach(function (id) { var el = $('#' + id); if (el) F.vals[id] = el.value; });
     var sd = $('#s-date'); if (sd && sd.value) F.date = sd.value;
   }
@@ -800,6 +839,12 @@
     var g = function (id) { var el = $('#' + id); return el ? el.value.trim() : ''; };
     var r = {};
     switch (F.kind) {
+      case 'temps_tours':
+        var ts = [];
+        for (var i = 0; i < F.tours; i++) { var a1 = g('s-tm-' + i), a2 = g('s-ts-' + i); ts.push(a1 === '' && a2 === '' ? null : (num(a1) || 0) * 60 + (num(a2) || 0)); }
+        var ok = ts.filter(function (x) { return x != null; });
+        if (!ok.length) return null;
+        r.v = Math.round(ok.reduce(function (s2, x) { return s2 + x; }, 0)); r.d = fmtTime(r.v); r.tours = ts; break;
       case 'temps': var mi = num(g('s-min')) || 0, se = num(g('s-sec')) || 0; if (!mi && !se) return null; r.v = mi * 60 + se; r.d = fmtTime(r.v); break;
       case 'rounds_reps': var rd = num(g('s-r')), rp = num(g('s-p')) || 0; if (rd == null) return null; r.v = rd + rp / 1000; r.d = rd + ' rds' + (rp ? ' + ' + rp : ''); break;
       case 'charge': var kg = num(g('s-kg')); if (kg == null) kg = heaviest(); if (kg == null) return null; r.v = kg; r.d = fmtKg(kg); break;
@@ -829,13 +874,13 @@
         if (m.unit === 'cal' && mach && m.reps) cal[mach] = (cal[mach] || 0) + m.reps;
         if (m.unit === 'm' && mach && m.reps) km[mach] = Math.round(((km[mach] || 0) + m.reps / 1000) * 100) / 100;
       });
-      row = { id: b.id, statut: 'fait', date_faite: F.date, niveau: F.level, type_score: F.kind, score_affiche: sc.d, score_valeur: sc.v, rpe_ressenti: F.rpe || '',
+      row = { id: b.id, statut: 'fait', date_faite: F.date, niveau: F.level, type_score: F.kind, score_affiche: sc.d, score_valeur: sc.v, score_tours: sc.tours ? sc.tours.map(function (x) { return x == null ? '' : x; }).join(';') : '', rpe_ressenti: F.rpe || '',
         cal_detail: detailStr(cal), km_detail: detailStr(km),
         rang: num(F.vals['s-rang']) || '', participants: num(F.vals['s-part']) || '', duree_min: num(F.vals['s-duree']) || '', notes: (F.vals['s-notes'] || '').trim() };
       // Pas de rang saisi mais un classement existe : on y insère ton score.
       var board = (M.cls[b.id] || []).filter(function (x) { return x.moi !== 'oui'; });
       if (!row.rang && board.length && sc.v !== '' && F.kind !== 'valide') {
-        var lower = F.kind === 'temps';
+        var lower = isTime(F.kind);
         var better = board.filter(function (x) { return x.score_valeur != null && (lower ? x.score_valeur < sc.v : x.score_valeur > sc.v); }).length;
         row.rang = better + 1; row.participants = board.length + 1;
       } else if (!row.participants && board.length) row.participants = board.length + (row.rang ? 0 : 1);
@@ -881,7 +926,7 @@
     return rows;
   }
   function rankRows(b, rows) {
-    var kind = b.type_score, lower = kind === 'temps';
+    var kind = b.type_score, lower = isTime(kind);
     var sorted = rows.slice().sort(function (x, y) {
       if (kind === 'valide' || x.v == null || y.v == null) return (x.v == null) - (y.v == null) || x.rang0 - y.rang0;
       return (lower ? x.v - y.v : y.v - x.v) || x.rang0 - y.rang0;
@@ -896,14 +941,14 @@
     var all = boardRows(b), f = S.boardFilter;
     var rows = rankRows(b, all.filter(function (r) { return f === 'all' || (f === 'RX' ? r.rx : r.sex === f); }));
     var me = rows.find(function (r) { return r.me; });
-    var fmtV = function (v) { return b.type_score === 'temps' ? fmtTime(v) : b.type_score === 'charge' ? fmtKg(v) : fmtNum(v) + (b.type_score === 'reps' ? ' reps' : ''); };
+    var fmtV = function (v) { return isTime(b.type_score) ? fmtTime(v) : b.type_score === 'charge' ? fmtKg(v) : fmtNum(v) + (b.type_score === 'reps' ? ' reps' : ''); };
     var vals = rows.map(function (r) { return r.v; }).filter(function (v) { return v != null; }).sort(function (a, z) { return a - z; });
     var med = vals.length ? (vals.length % 2 ? vals[(vals.length - 1) / 2] : (vals[vals.length / 2 - 1] + vals[vals.length / 2]) / 2) : null;
     var gap = '–';
     if (me && rows.length && me.v != null && rows[0].v != null && b.type_score !== 'valide') {
       var d = Math.abs(rows[0].v - me.v);
-      gap = d === 0 ? '1er' : '–' + (b.type_score === 'temps' ? fmtTime(d) : fmtNum(d) + (b.type_score === 'charge' ? ' kg' : ''));
-      if (b.type_score === 'temps' && d) gap = '+' + fmtTime(d);
+      gap = d === 0 ? '1er' : '–' + (isTime(b.type_score) ? fmtTime(d) : fmtNum(d) + (b.type_score === 'charge' ? ' kg' : ''));
+      if (isTime(b.type_score) && d) gap = '+' + fmtTime(d);
     }
     var h = '<div class="between"><div class="stack" style="gap:2px;min-width:0"><span class="small red" style="font-weight:700;letter-spacing:.08em">CLASSEMENT · ' + esc(fmtDayMid(b.date_prog).toUpperCase()) + '</span><b class="h3" style="font-size:26px">' + esc(b.nom) + '</b></div><button class="icon-btn" data-act="close" aria-label="Fermer">' + icon(I.x) + '</button></div>';
     if (all.length) {
@@ -951,7 +996,7 @@
     var ev = prEvents('0000', '9999', lvl);
     if (ev.length) {
       var p = ev[0], prev = ev.find(function (x) { return x.r !== p.r && !x.tie; });
-      h += '<section class="card" style="gap:8px"><h2 class="label">Dernier PR</h2><button class="li" style="padding:0;min-height:0" data-act="openpr" data-v="' + esc(p.r.key) + '" data-l="' + p.lvl + '"><span class="t"><b style="font-size:17px">' + esc(recordTitle(p.r)) + '</b><span>' + fmtDayMid(p.a.date) + ' · ' + esc(p.a.src || '') + (p.tie && p.a.prev ? ' · égale ' + fmtMonthYear(p.a.prev.date) : p.a.prev ? ' · avant ' + esc(recordValue(p.r, p.a.prev.value, p.a.prev)) : '') + '</span></span><span class="v red" style="font-size:30px">' + esc(recordValue(p.r, p.a.value, p.a)) + '</span></button>' +
+      h += '<section class="card" style="gap:8px"><h2 class="label">Dernier PR</h2><button class="li" style="padding:0;min-height:0" data-act="openpr" data-v="' + esc(p.r.key) + '" data-l="' + p.lvl + '"><span class="t"><b style="font-size:17px">' + esc(recordTitle(p.r)) + '</b><span>' + fmtDayMid(p.a.date) + ' · ' + esc(p.a.src || '') + (p.tie && p.a.prev ? ' · égale ' + fmtMonthYear(p.a.prev.date) : p.a.isFirst ? ' · premier ' + esc(p.r.detail || 'score') : p.a.prev ? ' · avant ' + esc(recordValue(p.r, p.a.prev.value, p.a.prev)) : '') + '</span></span><span class="v red" style="font-size:30px">' + esc(recordValue(p.r, p.a.value, p.a)) + '</span></button>' +
         (prev ? '<span class="small muted">Précédent PR : ' + esc(recordTitle(prev.r)) + ' ' + esc(recordValue(prev.r, prev.a.value, prev.a)) + ', ' + fmtMonthYear(prev.a.date) + '</span>' : '') + '</section>';
     }
     h += '<div class="grid2"><button class="btn" data-act="prall" data-v="1">Tout déplier</button><button class="btn" data-act="prall" data-v="0">Tout replier</button></div>';
@@ -1296,6 +1341,7 @@
         if (!F.kindTouched) { var b0 = M.byId[F.id], am = /amrap/i.test(MV.section(b0.description, v)); F.kind = am && b0.type_score !== 'rounds_reps' && !/amrap/i.test(MV.section(b0.description, 'RX')) ? 'rounds_reps' : (b0.type_score || F.kind); }
         if (!F.edited) { var b = M.byId[F.id]; F.moves = cloneMoves(MV.parse(b.description, { reg: M.reg, sex: M.reg.sexe || 'H', version: v, score: b.score_valeur, scoreType: F.kind }), b); }
         drawScore(); break;
+      case 'ftours': captureScore(); F.tours = Math.max(1, Math.min(30, (F.tours || 1) + (+v))); drawScore(); break;
       case 'fkind': captureScore(); F.kind = v; F.kindTouched = true; drawScore(); break;
       case 'fopt':
         captureScore();
@@ -1305,6 +1351,18 @@
         var oldPr = mo.perRound; mo.perRound = op.perRound;
         if (mo.perRounds) { mo.perRounds = mo.perRounds.map(function () { return op.perRound; }); mo.reps = op.perRound != null ? op.perRound * mo.perRounds.length : null; }
         else if (op.perRound != null && mo.reps != null && oldPr) mo.reps = Math.round(mo.reps / oldPr * op.perRound);
+        F.edited = true; drawScore(); break;
+      case 'funit':
+        captureScore();
+        var mu = F.moves[+el.dataset.i];
+        if (v === 'reps' && mu.unit !== 'reps') {
+          mu.unit = 'reps'; mu.reps = null;
+          if (mu.perRounds) { mu.perRounds = mu.perRounds.map(function () { return null; }); if (needsLoad(mu, M.byId[F.id])) mu.perLoads = mu.perRounds.map(function () { return mu.load != null ? mu.load : null; }); }
+        } else if (v === 's' && mu.unit !== 's') {
+          mu.unit = 's'; mu.perLoads = null; mu.load = null;
+          if (mu.perRounds) { mu.perRounds = mu.perRounds.map(function () { return mu.secRound != null ? mu.secRound : null; }); var kn = mu.perRounds.filter(function (x) { return x != null; }); mu.reps = kn.length ? kn.reduce(function (a, c) { return a + c; }, 0) : null; }
+          else mu.reps = mu.secRound != null ? mu.secRound : null;
+        }
         F.edited = true; drawScore(); break;
       case 'fdb': captureScore(); F.moves[+el.dataset.i].nbDb = +v; F.edited = true; drawScore(); break;
       case 'fmadd': captureScore(); F.moves.push({ name: '', key: '', reps: null, load: null, presc: null, nbDb: null, unit: 'reps', isNew: true }); F.edited = true; drawScore(); break;

@@ -34,7 +34,7 @@
   function canon(name) {
     var s = ' ' + String(name || '').toLowerCase().replace(/[’']/g, "'") + ' ';
     ALIAS.forEach(function (a) { s = s.replace(a[0], a[1]); });
-    s = s.replace(/[,;:|].*$/, '').replace(/\s+/g, ' ').trim();
+    s = s.replace(/\([^)]*\)/g, ' ').replace(/[,;:|].*$/, '').replace(/\s+/g, ' ').trim();
     s = s.split(' ').map(function (w) {
       if (/^(press|cross|across|plus|bus|abs|toes|series|chest|lats|ss)$/.test(w)) return w;
       if (/ies$/.test(w) && w.length > 4) return w.slice(0, -3) + 'y';
@@ -191,6 +191,9 @@
       if (ld != null && o.load == null) o.load = ld;
       var pct = body.match(/(\d+(?:[.,]\d+)?)\s*%\s*(?:du\s+|de\s+|of\s+)?(?:1\s*)?rm\s*([a-z&' ]{3,30})?/i);
       if (pct) { var rm = rmFor(pct[2] || body, reg); if (rm) { o.load = r05(rm.rm * num(pct[1]) / 100); o.pct = num(pct[1]); } }
+      // Parenthèses = consigne (« Squat clean (no feet) », « Leg curl (banded si pas de machine) ») : le mouvement reste « Squat clean ».
+      var par = body.match(/\(([^)]*)\)/g);
+      if (par) { o.note = par.map(function (x) { return x.slice(1, -1).trim(); }).filter(Boolean).join(', '); body = body.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim(); }
       if (/\b(ubk|unbroken)\b/i.test(body)) { o.ubk = true; body = body.replace(/\b(ubk|unbroken)\b/ig, ' '); }
       o.c = canon(body.replace(/@.*$/, '').replace(/\d+(?:[.,]\d+)?(?:\s*\/\s*\d+(?:[.,]\d+)?)?\s*(kgs?|lbs?|#)(?![a-z])/gi, '').replace(/\s\d+(?:[.,]\d+)?\s*\/\s*\d+(?:[.,]\d+)?\s*$/, '').replace(/\d+(?:[.,]\d+)?\s*%.*$/, '').replace(/\balt\b/i, ' alt '));
       if (!o.c || !/[a-z]/.test(o.c)) return null;
@@ -343,7 +346,7 @@
         rounds: rounds, perRound: mv.perRound, perRounds: perRounds, options: options, choice: mv.options ? mv.choice : null,
         ordre: i + 1, key: mv.c, name: display(mv.c), reps: reps, load: mv.load, nbDb: nb, unit: mv.unit, machine: mv.machine || null,
         range: mv.range, max: mv.max && !mv.fromScore, ladder: mv.ladder || null, avgLoad: !!mv.avgLoad, pct: mv.pct || null, perSide: mv.perSide, raw: mv.raw,
-        hint: (mv.ubk ? 'unbroken · ' : '') + (mv.options ? 'au choix' + (mv.range ? ' · fourchette ' + mv.range : '') : mv.ladder ? 'échelle ' + mv.ladder + '… : reps à saisir' : mv.goal ? 'total visé par la prog' : mv.range ? 'fourchette ' + mv.range + ' par round' : mv.max && !mv.fromScore ? 'max : reps à saisir' : mv.fromScore ? 'repris du score' : mv.perSide ? mv.raw.match(/^\d+\s*\/\s*\d+/)[0].replace(/\s/g, '') + ' = par côté' : mv.avgLoad ? 'charge moyenne de la progression' : mv.pct ? mv.pct + ' % RM' : '')
+        hint: (mv.note ? mv.note + ' · ' : '') + (mv.ubk ? 'unbroken · ' : '') + (mv.options ? 'au choix' + (mv.range ? ' · fourchette ' + mv.range : '') : mv.ladder ? 'échelle ' + mv.ladder + '… : reps à saisir' : mv.goal ? 'total visé par la prog' : mv.range ? 'fourchette ' + mv.range + ' par round' : mv.max && !mv.fromScore ? 'max : reps à saisir' : mv.fromScore ? 'repris du score' : mv.perSide ? mv.raw.match(/^\d+\s*\/\s*\d+/)[0].replace(/\s/g, '') + ' = par côté' : mv.avgLoad ? 'charge moyenne de la progression' : mv.pct ? mv.pct + ' % RM' : '')
       });
     });
     // Fusionne les doublons (même mouvement, même charge, même unité).

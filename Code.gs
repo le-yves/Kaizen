@@ -27,7 +27,7 @@ var HEADERS = {
 // Colonnes à garder en texte brut (sinon Sheets transforme "7:09" en heure ou "2026-11-09" en date).
 var TEXT_COLS = ['id', 'date_prog', 'date_faite', 'date', 'heure', 'source', 'statut', 'nom', 'type_bloc',
   'description', 'type_score', 'score_affiche', 'niveau', 'charges', 'km_detail', 'cal_detail', 'notes',
-  'sport', 'fichier', 'bloc_id', 'rx', 'moi', 'cle', 'mouvement', 'unite', 'sexe', 'valeur', 'reps_rounds', 'charges_rounds'];
+  'sport', 'fichier', 'bloc_id', 'rx', 'moi', 'cle', 'mouvement', 'unite', 'sexe', 'valeur', 'reps_rounds', 'charges_rounds', 'score_tours'];
 
 function creerCodeSecret() {
   var token = Utilities.getUuid().replace(/-/g, '').slice(0, 24);

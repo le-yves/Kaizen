@@ -216,3 +216,8 @@ details summary { color: var(--ink-2); }
 .mv-rl { display: grid; grid-template-columns: 28px 64px 14px 84px auto; align-items: center; gap: 6px; }
 .mv-rl .rn { font-size: 12px; font-weight: 700; color: var(--muted); }
 .mv-rl .input { min-height: 40px; padding: 4px 6px; text-align: center; font-weight: 700; }
+/* v2.3 : temps par tour */
+.tt-list { display: flex; flex-direction: column; gap: 8px; }
+.tt { display: grid; grid-template-columns: 24px minmax(0, 1fr) 10px minmax(0, 1fr); align-items: center; gap: 8px; }
+.tt .rn { font-weight: 800; color: var(--muted); }
+.tt .input { min-height: 48px; font-size: 20px; font-weight: 700; }
