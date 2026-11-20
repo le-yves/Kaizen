@@ -191,6 +191,11 @@
       if (ld != null && o.load == null) o.load = ld;
       var pct = body.match(/(\d+(?:[.,]\d+)?)\s*%\s*(?:du\s+|de\s+|of\s+)?(?:1\s*)?rm\s*([a-z&' ]{3,30})?/i);
       if (pct) { var rm = rmFor(pct[2] || body, reg); if (rm) { o.load = r05(rm.rm * num(pct[1]) / 100); o.pct = num(pct[1]); } }
+      // « 3 Snatch @65% à 70% » : pourcentage en ligne, sans « RM » écrit → RM du mouvement lui-même.
+      if (!pct) {
+        var ip = body.match(/@\s*(\d+(?:[.,]\d+)?)\s*%(?:\s*(?:à|-|–)\s*(\d+(?:[.,]\d+)?)\s*%?)?/i);
+        if (ip) { var pv = ip[2] ? (num(ip[1]) + num(ip[2])) / 2 : num(ip[1]); o.pct = pv; var rm2 = rmFor(body, reg); if (rm2) o.load = r05(rm2.rm * pv / 100); }
+      }
       // Parenthèses = consigne (« Squat clean (no feet) », « Leg curl (banded si pas de machine) ») : le mouvement reste « Squat clean ».
       var par = body.match(/\(([^)]*)\)/g);
       if (par) { o.note = par.map(function (x) { return x.slice(1, -1).trim(); }).filter(Boolean).join(', '); body = body.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim(); }
@@ -352,7 +357,7 @@
     // Fusionne les doublons (même mouvement, même charge, même unité).
     var merged = [];
     res.forEach(function (m) {
-      var d = merged.find(function (x) { return x.key === m.key && x.unit === m.unit && x.load === m.load && x.nbDb === m.nbDb && !x.range && !m.range && !x.max && !m.max && !x.options && !m.options; });
+      var d = merged.find(function (x) { return x.key === m.key && x.unit === m.unit && x.load === m.load && (x.pct || null) === (m.pct || null) && x.nbDb === m.nbDb && !x.range && !m.range && !x.max && !m.max && !x.options && !m.options; });
       if (d && d.reps != null && m.reps != null) {
         if (d.rounds && d.rounds === m.rounds) d.perRound += m.perRound; else { d.rounds = null; }
         d.reps += m.reps;

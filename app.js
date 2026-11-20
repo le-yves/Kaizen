@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.3.2';
+  var VERSION = '2.3.3';
   var CFG_KEY = 'kaizen.config';
   var UI_KEY = 'kaizen.ui';
   var PHOTO_KEY = 'kaizen.photo';
