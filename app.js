@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.4.0';
+  var VERSION = '2.4.1';
   var CFG_KEY = 'kaizen.config';
   var UI_KEY = 'kaizen.ui';
   var PHOTO_KEY = 'kaizen.photo';
@@ -44,7 +44,7 @@
   function titleName(n) { return String(n || '').toLowerCase().replace(/(^|[\s-])(\S)/g, function (m, a, b) { return a + b.toUpperCase(); }); }
   function icon(path) { return '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="' + path + '"/></svg>'; }
   function chev(open) { return '<svg class="chev" aria-hidden="true" viewBox="0 0 24 24"><path d="' + (open ? I.up : I.down) + '"/></svg>'; }
-  var I = { left: 'M15 6l-6 6 6 6', right: 'M9 6l6 6-6 6', plus: 'M12 5v14M5 12h14', down: 'M6 9l6 6 6-6', up: 'M6 15l6-6 6 6', gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z', check: 'M5 12l5 5 9-10', x: 'M6 6l12 12M18 6L6 18', trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13' };
+  var I = { left: 'M15 6l-6 6 6 6', right: 'M9 6l6 6-6 6', plus: 'M12 5v14M5 12h14', down: 'M6 9l6 6 6-6', up: 'M6 15l6-6 6 6', gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z', check: 'M5 12l5 5 9-10', x: 'M6 6l12 12M18 6L6 18', trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13', sync: 'M20 11a8 8 0 0 0-14.6-4.5M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5M20 20v-4h-4' };
 
   // ---------- Config et stockage ----------
   function getCfg() { try { return JSON.parse(localStorage.getItem(CFG_KEY) || '{}'); } catch (e) { return {}; } }
@@ -423,6 +423,11 @@
   // ---------- Rendu commun ----------
   function setNav() { $$('.tabs a').forEach(function (a) { a.setAttribute('aria-current', a.dataset.tab === S.tab || (S.tab === 'ajouter' && a.dataset.tab === 'wod') || (S.tab === 'forme' && a.dataset.tab === 'accueil') ? 'page' : 'false'); }); }
   function toast(t) { var el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(function () { el.hidden = true; }, 2800); }
+  function syncBtn() {
+    if (!getCfg().url && !demoUrl()) return '';
+    var at = S.syncedAt ? (iso(S.syncedAt) === iso(today()) ? pad(S.syncedAt.getHours()) + ':' + pad(S.syncedAt.getMinutes()) : S.syncedAt.getDate() + ' ' + MO[S.syncedAt.getMonth()]) : '';
+    return '<button class="sync-btn' + (S.loading ? ' spin' : '') + '" data-act="refresh" aria-label="Mettre à jour depuis le Sheet"' + (S.loading ? ' disabled' : '') + '>' + icon(I.sync) + '<span>' + (S.loading ? 'Synchro…' : at ? 'Maj ' + at : 'Mettre à jour') + '</span></button>';
+  }
   function syncLine() {
     if (S.loading) return '<div class="loading">Synchronisation avec le Sheet…</div>';
     if (S.error) return '<div class="loading" style="color:var(--amber)">' + esc(S.error) + '</div>';
@@ -467,7 +472,7 @@
     var word = isWeek ? 'semaine' : 'mois', ce = isWeek ? 'cette semaine' : 'ce mois-ci';
     var h = '';
     h += '<div class="between"><span class="brand">KAIZEN <small>改善</small></span><a class="icon-btn" href="#moi" aria-label="Réglages">' + icon(I.gear) + '</a></div>';
-    h += '<header class="row" style="gap:14px;margin-top:-8px">' + avatarHtml() + '<div class="stack" style="gap:2px"><span class="label">Salut</span><h1 class="h1">' + esc(name) + '</h1></div></header>';
+    h += '<header class="row" style="gap:14px;margin-top:-8px;align-items:center">' + avatarHtml() + '<div class="stack" style="gap:2px"><span class="label">Salut</span><h1 class="h1">' + esc(name) + '</h1></div>' + syncBtn() + '</header>';
     h += syncLine();
     h += formeButton();
     h += '<div class="seg" role="group" aria-label="Période"><button type="button" data-act="period" data-v="week" aria-pressed="' + isWeek + '">Semaine</button><button type="button" data-act="period" data-v="month" aria-pressed="' + !isWeek + '">Mois</button></div>';
@@ -1516,7 +1521,7 @@
   function moiAthlytic() {
     var ks = Object.keys(M.forme).sort();
     var h = '<section class="card"><h2 class="label">Données Athlytic</h2>';
-    if (ks.length) h += '<div class="row" style="gap:10px"><span class="rd big" style="background:var(--green)"></span><span class="stack" style="gap:2px"><b>Jusqu’au ' + fmtDay(ks[ks.length - 1]) + '</b><span class="small muted">' + ks.length + ' jours de forme · ' + M.montre.length + ' séances montre</span></span></div>';
+    if (ks.length) h += '<div class="row" style="gap:10px"><span class="rd big" style="background:var(--green)"></span><span class="stack" style="gap:2px"><b>Jusqu’au ' + fmtDay(ks[ks.length - 1]) + '</b><span class="small muted">' + ks.length + ' jours de forme · ' + M.montre.length + ' séances montre' + (M.reg.athlytic_maj ? '<br>Dernier envoi : ' + esc(M.reg.athlytic_maj) : '') + '</span></span></div>';
     else h += '<span class="muted small">Aucune donnée importée pour l’instant.</span>';
     if (M.gateway < 3 && !demoUrl()) h += '<div class="notice">Pour importer depuis l’app, mets à jour la passerelle : colle le nouveau Code.gs (v3) dans Apps Script, puis Déployer › Gérer les déploiements › Modifier › Nouvelle version.</div>';
     h += '<label class="btn primary" style="cursor:pointer">' + icon('M12 3v12M7 10l5 5 5-5M5 21h14') + 'Importer un export Athlytic (.json)<input type="file" id="m-athl" accept=".json,application/json" hidden></label>';

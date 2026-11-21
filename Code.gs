@@ -1,5 +1,5 @@
 /**
- * Kaizen v3 — passerelle entre l'app et le Google Sheet.
+ * Kaizen v3.1 — passerelle entre l'app et le Google Sheet.
  * À coller dans Extensions > Apps Script du Google Sheet "Kaizen".
  *
  * 1. Exécuter une fois la fonction creerCodeSecret() : le code s'affiche dans le journal d'exécution.
@@ -171,6 +171,21 @@ function replaceRows_(name, blocId, rows) {
 function replaceClassement_(blocId, rows) { return replaceRows_('Classements', blocId, rows); }
 
 // Import en masse (Athlytic) : met à jour les lignes existantes par clé, ajoute les nouvelles, en une seule écriture.
+// Transforme l'export JSON d'Athlytic en lignes des onglets Forme et Montre.
+function athlyticRows_(j) {
+  function g(o, k) { var v = (o || {})[k]; return v == null ? '' : v; }
+  var forme = [], montre = [];
+  (j.days || []).forEach(function (x) {
+    var r = x.recovery, s = x.sleep, ex = x.exertion, t = x.training_load;
+    forme.push({ date: x.date, recovery: g(r, 'score'), vfc_ms: g(r, 'hrv_ms'), fc_repos: g(r, 'resting_hr_bpm'), sommeil_min: g(s, 'asleep_min'), profond_min: g(s, 'deep_min'), rem_min: g(s, 'rem_min'), core_min: g(s, 'core_min'), eveil_min: g(s, 'awake_min'), qualite_sommeil: g(s, 'quality_score'), perf_sommeil_pct: g(s, 'performance_pct'), objectif_sommeil_min: g(s, 'target_min'), exertion: g(ex, 'score'), exertion_min: g(ex, 'target_min'), exertion_max: g(ex, 'target_max'), trimp: g(t, 'daily_trimp'), charge_7j: g(t, 'short_term'), charge_6sem: g(t, 'long_term'), ratio_charge: g(t, 'ratio'), statut_charge: g(t, 'rating') });
+    (x.workouts || []).forEach(function (w) {
+      var hm = String(w.start || '').slice(11, 16);
+      montre.push({ date: x.date, heure: hm, id: 'ath-' + x.date + '-' + hm.replace(':', ''), type: w.type || '', duree_min: g(w, 'duration_min'), effort: g(w, 'effort'), kcal: g(w, 'active_energy'), distance_km: g(w, 'distance'), source: 'Athlytic' });
+    });
+  });
+  return { action: 'athlytic', forme: forme, montre: montre, auto: true };
+}
+
 function bulkUpsert_(name, rows) {
   var sh = sheet_(name), h = headers_(sh), keyCol = SHEETS[name].key, k = h.indexOf(keyCol);
   if (k < 0) throw new Error('Colonne ' + keyCol + ' absente de ' + name);
@@ -220,7 +235,11 @@ function doPost(e) {
   var lock = LockService.getScriptLock();
   try {
     var body = JSON.parse(e.postData.contents);
-    checkToken_(body.token);
+    // Export Athlytic brut envoyé par le raccourci iPhone : le code secret est dans l'adresse (?token=…).
+    if (body && body.source === 'Athlytic' && body.days) {
+      checkToken_((e.parameter || {}).token);
+      body = athlyticRows_(body);
+    } else checkToken_(body.token);
     lock.waitLock(20000);
     var result;
     switch (body.action) {
@@ -230,7 +249,10 @@ function doPost(e) {
       case 'reglage': result = upsert_('Reglages', { cle: body.cle, valeur: body.valeur }); break;
       case 'mouvements': result = replaceRows_('Mouvements', body.bloc_id, body.rows); break;
       case 'athlete': result = upsert_('Athletes', { nom: body.nom, sexe: body.sexe }); break;
-      case 'athlytic': result = [bulkUpsert_('Forme', body.forme), bulkUpsert_('Montre', body.montre)]; break;
+      case 'athlytic':
+        result = [bulkUpsert_('Forme', body.forme), bulkUpsert_('Montre', body.montre)];
+        upsert_('Reglages', { cle: 'athlytic_maj', valeur: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd' 'HH:mm") + (body.auto ? ' · auto' : '') });
+        break;
       default: throw new Error('Action inconnue : ' + body.action);
     }
     return json_({ ok: true, result: result });
