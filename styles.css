@@ -221,3 +221,43 @@ details summary { color: var(--ink-2); }
 .tt { display: grid; grid-template-columns: 24px minmax(0, 1fr) 10px minmax(0, 1fr); align-items: center; gap: 8px; }
 .tt .rn { font-weight: 800; color: var(--muted); }
 .tt .input { min-height: 48px; font-size: 20px; font-weight: 700; }
+
+/* v2.4 : forme (Athlytic) */
+:root { --green-soft: #12261A; }
+.forme-btn { display: flex; align-items: center; gap: 14px; padding: 14px 14px 14px 16px; min-height: 88px; background: var(--surface); border: 1px solid var(--line-2); border-radius: 16px; color: var(--ink); text-decoration: none; }
+.forme-btn:active { border-color: var(--muted); }
+.chev-r { width: 20px; height: 20px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.ring { border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ring > div { border-radius: 50%; background: var(--surface); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.pill { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.rd { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 2px var(--bg); }
+.rd.big { width: 10px; height: 10px; box-shadow: none; }
+.mini { background: var(--bg); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.num .u, .mini .u { font-size: 13px; color: var(--muted); font-family: var(--body); font-weight: 600; }
+.sleepbar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; background: var(--line); }
+.legend2 { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--ink-2); }
+.legend2 span { display: inline-flex; align-items: center; gap: 6px; }
+.legend2 i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.gauge { position: relative; height: 10px; border-radius: 5px; background: var(--line); }
+.gauge .band { position: absolute; top: 0; bottom: 0; background: #1F3A2A; border-radius: 5px; }
+.gauge .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--blue); border-radius: 5px; opacity: .9; }
+.gauge .mark { position: absolute; top: -4px; width: 4px; height: 18px; border-radius: 2px; background: var(--ink); }
+.hint { display: flex; gap: 10px; align-items: flex-start; background: var(--bg); border-radius: 12px; padding: 12px 14px; font-size: 13px; color: var(--ink-2); line-height: 1.45; }
+.hint svg, .watch svg { width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; margin-top: 1px; }
+.bars7 { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; align-items: end; height: 100px; }
+.bars7 > div { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; height: 100%; }
+.bars7 i { width: 100%; max-width: 30px; border-radius: 6px 6px 2px 2px; display: block; }
+.bars7 .small { font-size: 11px; font-weight: 600; }
+.watch { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.inset > .watch:first-child { border-top: 0; padding-top: 0; }
+.vs { display: grid; grid-template-columns: auto minmax(0, 1fr) 28px; align-items: center; gap: 6px 10px; font-size: 12px; color: var(--muted); }
+.vs > div { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.vs i { display: block; height: 100%; border-radius: 4px; }
+.vs b { color: var(--ink); text-align: right; font-size: 13px; }
+.linkish { background: none; border: 0; padding: 0; min-height: 36px; color: var(--ink-2); text-align: left; cursor: pointer; font: inherit; font-size: 12px; text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 3px; }
+.bars60 { position: relative; display: flex; align-items: flex-end; gap: 1.5px; height: 128px; }
+.bars60 > div { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; height: 100%; }
+.bars60 i { width: 100%; border-radius: 2px 2px 0 0; display: block; }
+.bars60 .prdot { width: 5px; height: 5px; border-radius: 50%; background: var(--red-ink); display: block; }
+.bars60.load { height: 110px; }
+.bars60 .thr { position: absolute; left: 0; right: 0; bottom: 90px; border-top: 1.5px dashed var(--red-ink); opacity: .7; pointer-events: none; }

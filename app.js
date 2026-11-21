@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.3.3';
+  var VERSION = '2.4.0';
   var CFG_KEY = 'kaizen.config';
   var UI_KEY = 'kaizen.ui';
   var PHOTO_KEY = 'kaizen.photo';
@@ -191,7 +191,20 @@
     (raw.athletes || []).forEach(function (a) { if (a.nom) sexOf[normName(a.nom)] = String(a.sexe || '').toUpperCase().charAt(0); });
     var goals = [];
     try { goals = JSON.parse(reg.objectifs || '[]') || []; } catch (e) { goals = []; }
-    var m = { reg: reg, seances: seances, strava: strava, cls: clsBy, mov: movBy, sexOf: sexOf, goals: goals, byId: {}, gateway: raw.version_passerelle || (raw.mouvements ? 2 : 1), movCache: {} };
+    // v2.4 : forme (Athlytic) et séances de la montre
+    var forme = {};
+    (raw.forme || []).forEach(function (r) {
+      var d = String(r.date || '').slice(0, 10); if (!/^\d{4}-\d\d-\d\d$/.test(d)) return;
+      forme[d] = { date: d, recovery: num(r.recovery), vfc: num(r.vfc_ms), fc: num(r.fc_repos), sleep: num(r.sommeil_min), deep: num(r.profond_min), rem: num(r.rem_min), core: num(r.core_min), awake: num(r.eveil_min), sq: num(r.qualite_sommeil), sgoal: num(r.objectif_sommeil_min), ex: num(r.exertion), exMin: num(r.exertion_min), exMax: num(r.exertion_max), trimp: num(r.trimp), l7: num(r.charge_7j), l42: num(r.charge_6sem), ratio: num(r.ratio_charge), rating: String(r.statut_charge || '') };
+      if (forme[d].recovery != null) forme[d].recovery = Math.round(forme[d].recovery);
+    });
+    var montre = (raw.montre || []).map(function (r) {
+      var dur = num(r.duree_min);
+      return { id: String(r.id || ''), date: String(r.date || '').slice(0, 10), heure: String(r.heure || '').slice(0, 5), type: String(r.type || ''), dur: dur != null ? Math.round(dur) : null, effort: num(r.effort), kcal: num(r.kcal) != null ? Math.round(num(r.kcal)) : null, km: num(r.distance_km) };
+    }).filter(function (w) { return /^\d{4}-\d\d-\d\d$/.test(w.date); }).sort(function (a, b) { return (a.date + a.heure) < (b.date + b.heure) ? -1 : 1; });
+    var montreBy = {};
+    montre.forEach(function (w) { (montreBy[w.date] = montreBy[w.date] || []).push(w); });
+    var m = { reg: reg, seances: seances, strava: strava, cls: clsBy, mov: movBy, sexOf: sexOf, goals: goals, byId: {}, gateway: raw.version_passerelle || (raw.mouvements ? 2 : 1), movCache: {}, forme: forme, montre: montre, montreBy: montreBy };
     seances.forEach(function (s) { m.byId[s.id] = s; });
     M = m;
     m.records = buildRecords(seances, strava);
@@ -351,19 +364,41 @@
     var cfDays = {}, days = {};
     done.forEach(function (s) { cfDays[s.date_faite] = 1; days[s.date_faite] = 1; });
     endu.forEach(function (a) { days[a.date] = 1; });
-    var res = { done: done, endu: endu, days: days };
+    var wEndu = freeEndu(from, to);
+    wEndu.forEach(function (w) { days[w.date] = 1; });
+    var res = { done: done, endu: endu, days: days, wEndu: wEndu };
     if (light) return res;
-    var minutes = 0, split = { haltero: 0, gym: 0, cardio: 0, renfo: 0 };
+    // Durée : la montre fait foi les jours où elle a enregistré la séance, sinon estimation + échauffement.
+    var minutes = 0, split = { haltero: 0, gym: 0, cardio: 0, renfo: 0 }, byDay = {}, watchDays = 0;
     done.forEach(function (s) {
       var d = s.duree_min || estimateDuration(s, s.type_score === 'temps' ? s.score_valeur : s.type_score === 'temps_tours' && s.tours ? s.tours.reduce(function (a, x) { return a + (x || 0); }, 0) : null);
-      minutes += d;
-      var sp = splitBloc(s);
-      Object.keys(sp).forEach(function (k) { split[k] += sp[k] * d; });
+      (byDay[s.date_faite] = byDay[s.date_faite] || []).push({ s: s, d: d });
     });
-    minutes += Object.keys(cfDays).length * warm;
+    function tot(a) { return a.reduce(function (x, it) { return x + it.d; }, 0); }
+    Object.keys(byDay).forEach(function (ds) {
+      var items = byDay[ds], ws = cfWatch(ds), est = tot(items) || 1;
+      if (ws.length) {
+        watchDays++;
+        var wc = 0, wf = 0;
+        ws.forEach(function (w) { if (wKind(w) === 'force') wf += w.dur || 0; else wc += w.dur || 0; });
+        var dcb = dayBlocks(ds).cond, cond = items.filter(function (it) { return dcb.indexOf(it.s) >= 0; }), oth = items.filter(function (it) { return dcb.indexOf(it.s) < 0; });
+        if (wc && wf && cond.length && oth.length) {
+          var kc = wc / (tot(cond) || 1), kf = wf / (tot(oth) || 1);
+          items.forEach(function (it) { it.d = it.d * (dcb.indexOf(it.s) >= 0 ? kc : kf); });
+        } else { var k = (wc + wf) / est; items.forEach(function (it) { it.d = it.d * k; }); }
+      } else minutes += warm;
+      items.forEach(function (it) {
+        minutes += it.d;
+        var sp = splitBloc(it.s);
+        Object.keys(sp).forEach(function (x) { split[x] += sp[x] * it.d; });
+      });
+    });
     endu.forEach(function (a) { var d = (a.duree_s || 0) / 60; minutes += d; split.cardio += d; });
+    wEndu.forEach(function (w) { minutes += w.dur || 0; split.cardio += w.dur || 0; });
+    res.watchDays = watchDays; res.cfDayCount = Object.keys(byDay).length;
     var km = {}, cal = {}, reps = {}, kg = {}, names = {};
     endu.forEach(function (a) { if (a.distance_km) km[a.endu] = (km[a.endu] || 0) + a.distance_km; });
+    wEndu.forEach(function (w) { var e = WT_ENDU[w.type]; if (w.km && e) km[e] = (km[e] || 0) + w.km; });
     done.forEach(function (s) {
       var mv = movesOf(s);
       var k = parseDetail(s.km_detail), c = parseDetail(s.cal_detail);
@@ -386,7 +421,7 @@
   function sortedKeys(o) { return Object.keys(o).sort(function (a, b) { return o[b] - o[a]; }); }
 
   // ---------- Rendu commun ----------
-  function setNav() { $$('.tabs a').forEach(function (a) { a.setAttribute('aria-current', a.dataset.tab === S.tab || (S.tab === 'ajouter' && a.dataset.tab === 'wod') ? 'page' : 'false'); }); }
+  function setNav() { $$('.tabs a').forEach(function (a) { a.setAttribute('aria-current', a.dataset.tab === S.tab || (S.tab === 'ajouter' && a.dataset.tab === 'wod') || (S.tab === 'forme' && a.dataset.tab === 'accueil') ? 'page' : 'false'); }); }
   function toast(t) { var el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(function () { el.hidden = true; }, 2800); }
   function syncLine() {
     if (S.loading) return '<div class="loading">Synchronisation avec le Sheet…</div>';
@@ -402,7 +437,7 @@
       v.innerHTML = '<div class="empty"><b>Chargement de ton carnet…</b><span>Lecture du Google Sheet Kaizen.</span>' + (S.error ? '<span class="amber">' + esc(S.error) + '</span>' : '') + '</div>';
       return;
     }
-    var fn = { accueil: viewAccueil, wod: viewWod, ajouter: viewAjouter, pr: viewPr, analyse: viewAnalyse, moi: viewMoi }[S.tab] || viewAccueil;
+    var fn = { accueil: viewAccueil, wod: viewWod, ajouter: viewAjouter, pr: viewPr, analyse: viewAnalyse, moi: viewMoi, forme: viewForme }[S.tab] || viewAccueil;
     v.innerHTML = fn();
     bind();
   }
@@ -434,6 +469,7 @@
     h += '<div class="between"><span class="brand">KAIZEN <small>改善</small></span><a class="icon-btn" href="#moi" aria-label="Réglages">' + icon(I.gear) + '</a></div>';
     h += '<header class="row" style="gap:14px;margin-top:-8px">' + avatarHtml() + '<div class="stack" style="gap:2px"><span class="label">Salut</span><h1 class="h1">' + esc(name) + '</h1></div></header>';
     h += syncLine();
+    h += formeButton();
     h += '<div class="seg" role="group" aria-label="Période"><button type="button" data-act="period" data-v="week" aria-pressed="' + isWeek + '">Semaine</button><button type="button" data-act="period" data-v="month" aria-pressed="' + !isWeek + '">Mois</button></div>';
     h += '<div class="between" style="margin-top:-6px"><button class="icon-btn" data-act="pprev" aria-label="Période précédente">' + icon(I.left) + '</button><div class="stack" style="gap:2px;align-items:center"><b style="font-size:16px">' + label + '</b>' +
       (isCur ? '<span class="small red" style="font-weight:600">' + (isWeek ? 'Semaine en cours' : 'Mois en cours') + '</span>' : '<button class="chip" style="min-height:30px;font-size:12px" data-act="pnow">' + (isWeek && S.wOff > 0 ? 'À venir · revenir à aujourd’hui' : 'Revenir à aujourd’hui') + '</button>') +
@@ -445,7 +481,7 @@
       h += '<div class="days">';
       for (var i = 0; i < 7; i++) {
         var d = addDays(r.a, i), ds = iso(d), trained = st.days[ds], isT = ds === t;
-        h += '<div class="day' + (trained ? ' trained' : '') + (isT ? ' today' : '') + '" style="cursor:default"><span class="d">' + DOW[d.getDay()] + '</span><span class="n">' + d.getDate() + '</span><span class="small" style="font-size:10px">' + (trained ? '✓' : isT ? 'auj.' : '') + '</span></div>';
+        h += '<div class="day' + (trained ? ' trained' : '') + (isT ? ' today' : '') + '" style="cursor:default"><span class="d">' + DOW[d.getDay()] + '</span><span class="n">' + d.getDate() + '</span><span class="small" style="font-size:10px">' + (trained ? '✓' : isT ? 'auj.' : '') + '</span>' + dayDot(ds) + '</div>';
       }
       h += '</div>';
     } else {
@@ -465,7 +501,7 @@
     var nPr = st.prs.filter(function (p) { return !p.tie; }).length, nTie = st.prs.length - nPr;
     h += '<section class="grid3" aria-label="Chiffres clés">' +
       '<div class="tile"><span class="num">' + st.done.length + '</span><span class="cap">' + (st.prog.length ? 'blocs faits ' + progTxt : 'blocs faits') + '</span></div>' +
-      '<div class="tile"><span class="num">' + fmtDur(st.minutes) + '</span><span class="cap">d’entraînement, échauff. inclus</span></div>' +
+      '<div class="tile"><span class="num">' + fmtDur(st.minutes) + '</span><span class="cap">' + (!st.watchDays ? 'd’entraînement, échauff. inclus' : st.watchDays >= st.cfDayCount ? 'd’entraînement, mesuré par ta montre' : 'd’entraînement · montre ' + st.watchDays + ' j sur ' + st.cfDayCount + ', reste estimé') + '</span></div>' +
       '<div class="tile"><span class="num">' + nPr + '</span><span class="cap">PR ' + ce + (nTie ? ' · ' + nTie + ' égalé' + (nTie > 1 ? 's' : '') : '') + '</span></div></section>';
 
     // Ce que tu fais vraiment (mois)
@@ -607,9 +643,10 @@
         h += '<div class="small muted">Tours : <b style="color:var(--ink)">' + b.tours.map(function (x) { return x != null ? fmtTime(x) : '–'; }).join(' · ') + '</b>' + (tk.length > 1 ? ' · moyenne ' + fmtTime(tk.reduce(function (x, y) { return x + y; }, 0) / tk.length) + ' · écart ' + fmtTime(Math.max.apply(null, tk) - Math.min.apply(null, tk)) : '') + '</div>';
       }
       if (b.notes) h += '<div class="small muted pre">' + esc(b.notes) + '</div>';
-      h += '</div>';
+      h += watchBlock(b) + '</div>';
     } else if (b.done) {
       h += '<div class="row ok" style="font-weight:600">' + icon(I.check).replace('<svg', '<svg style="width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:3"') + 'Validé' + (b.niveau && b.niveau !== 'RX' ? ' · ' + esc(b.niveau) : '') + (b.rpe_ressenti ? ' · RPE ' + b.rpe_ressenti : '') + '</div>';
+      var wb = watchBlock(b); if (wb) h += '<div class="inset">' + wb + '</div>';
     }
     var lt = lastTime(b);
     if (lt) h += '<div class="small muted">La dernière fois : <b style="color:var(--ink)">' + esc(lt.score_affiche) + '</b> le ' + fmtDay(lt.date_faite || lt.date_prog) + (lt.niveau && lt.niveau !== 'RX' ? ' (' + esc(lt.niveau) + ')' : '') + '</div>';
@@ -1126,6 +1163,7 @@
       var fastest = Math.min.apply(null, ry.map(function (y) { return med[y]; }));
       h += '<section class="card" style="gap:10px"><h2 class="label">Endurance · allure de course</h2>' + ry.map(function (y) { return '<div class="row"><span class="bl" style="width:44px">' + y + '</span><div class="bar"><div style="width:' + Math.round(fastest / med[y] * 100) + '%;background:var(--red)"></div></div><b class="bv">' + fmtTime(med[y]) + '/km</b></div>'; }).join('') + '<span class="small muted">Allure médiane de tes sorties de plus de 3 km sur Strava. Barre plus longue = plus rapide.</span></section>';
     }
+    h += analyseForme();
     // DarkZone
     var ranked = M.seances.filter(function (s) { return s.done && s.rang && s.participants; }).sort(function (a, b) { return a.date_prog < b.date_prog ? 1 : -1; }).slice(0, 12);
     h += '<section class="stack"><h2 class="label">Où je me situe dans DarkZone</h2>';
@@ -1203,6 +1241,7 @@
       '<div class="field"><label for="cfg-token">Code secret</label><input class="input" id="cfg-token" value="' + esc(c.token || '') + '" autocomplete="off"></div>' +
       '<button class="btn primary" type="submit">Enregistrer et synchroniser</button></form></details>' +
       '<span class="small muted">L’adresse de la passerelle, le code secret et ta photo restent sur ce téléphone.</span></section>';
+    if (M) h += moiAthlytic();
     if (M) {
       var first0 = M.seances.reduce(function (m, s) { return s.source === 'BTWB' && s.date_faite && (!m || s.date_faite < m) ? s.date_faite : m; }, ''), lastB = M.seances.reduce(function (m, s) { return s.source === 'BTWB' && s.date_faite > m ? s.date_faite : m; }, '');
       var sFirst = M.strava.reduce(function (m, a) { return !m || a.date < m ? a.date : m; }, ''), sLast = M.strava.reduce(function (m, a) { return a.date > m ? a.date : m; }, '');
@@ -1264,6 +1303,254 @@
     rd.readAsDataURL(file);
   }
 
+  // ---------- v2.4 : forme (Athlytic) et séances de la montre ----------
+  var WT_LABEL = { 'Functional Strength Training': 'Force fonctionnelle', 'Traditional Strength Training': 'Musculation', 'Cross Training': 'Cross training', 'High Intensity Interval Training': 'HIIT', 'Mixed Cardio': 'Cardio mixte', 'Core Training': 'Gainage', 'Rowing': 'Rameur', 'Running': 'Course', 'Cycling': 'Vélo', 'Hiking': 'Randonnée', 'Walking': 'Marche' };
+  var WT_ENDU = { 'Running': 'run', 'Cycling': 'bike', 'Hiking': 'other', 'Walking': 'other' };
+  function wLabel(t) { return WT_LABEL[t] || t || 'Séance'; }
+  // force = bloc de force ; cond = metcon / cardio ; endu = sortie (run, vélo…)
+  function wKind(w) {
+    if (WT_ENDU[w.type]) return 'endu';
+    return /cross|hiit|interval|cardio|rowing/i.test(w.type) ? 'cond' : 'force';
+  }
+  function stravaTwin(w) {
+    return M.strava.some(function (a) {
+      if (!a.endu || a.date !== w.date || !a.duree_s || !w.dur) return false;
+      var d = a.duree_s / 60; return Math.abs(d - w.dur) <= Math.max(5, w.dur * 0.25);
+    });
+  }
+  // Séances montre qui couvrent les blocs CrossFit faits ce jour-là.
+  function cfWatch(ds) {
+    var list = (M.montreBy[ds] || []).filter(function (w) { return w.type !== 'Walking'; });
+    if (!list.length || !M.seances.some(function (s) { return s.done && s.date_faite === ds; })) return [];
+    var hasCardio = M.seances.some(function (s) { return s.done && s.date_faite === ds && (s.type_bloc === 'cardio' || s.type_bloc === 'metcon'); });
+    return list.filter(function (w) { var k = wKind(w); return k !== 'endu' || (hasCardio && !stravaTwin(w)); });
+  }
+  // Sorties de la montre absentes de Strava (pour ne pas compter deux fois).
+  function freeEndu(from, to) {
+    return M.montre.filter(function (w) {
+      if (w.date < from || w.date > to || w.type === 'Walking' || wKind(w) !== 'endu' || stravaTwin(w)) return false;
+      return cfWatch(w.date).indexOf(w) < 0;
+    });
+  }
+  // Blocs « cardio » d'un jour : metcon et cardio ; à défaut, les blocs gym/renfo chronométrés ou en reps (ex. push endurance).
+  function dayBlocks(ds) {
+    var all = M.seances.filter(function (s) { return s.done && s.date_faite === ds && s.source !== 'PR'; });
+    var cond = all.filter(function (s) { return s.type_bloc === 'metcon' || s.type_bloc === 'cardio'; });
+    if (!cond.length) cond = all.filter(function (s) { return (s.type_bloc === 'gym' || s.type_bloc === 'renfo') && (s.type_score === 'temps' || s.type_score === 'reps' || s.type_score === 'rounds_reps'); });
+    return { all: all, cond: cond };
+  }
+  function blockWatch(b) {
+    if (!b.done || !b.date_faite || b.source === 'PR') return null;
+    var ws = cfWatch(b.date_faite);
+    if (!ws.length) return null;
+    var db = dayBlocks(b.date_faite), cond = db.cond.indexOf(b) >= 0;
+    var mine = ws.filter(function (w) { var k = wKind(w); return cond ? k !== 'force' : k === 'force'; });
+    var group = cond ? db.cond : db.all.filter(function (s) { return db.cond.indexOf(s) < 0; });
+    if (!mine.length) { mine = ws; group = db.all; }
+    return { list: mine, shared: group.length };
+  }
+  function recColor(v) { return v == null ? 'transparent' : v >= 67 ? 'var(--green)' : v >= 34 ? 'var(--amber)' : 'var(--red-ink)'; }
+  function recLabel(v) { return v >= 67 ? ['Bonne récup', 'ok', 'var(--green-soft)'] : v >= 34 ? ['Récup moyenne', 'amber', 'var(--amber-soft)'] : ['Récup basse', 'red', 'var(--red-soft)']; }
+  function formeOn(ds) { return M.forme[ds] || null; }
+  function formeLatest() {
+    var t = iso(today()), ks = Object.keys(M.forme).filter(function (d) { return d <= t; }).sort();
+    return ks.length ? M.forme[ks[ks.length - 1]] : null;
+  }
+  function formeAvg(ds, key, n) {
+    var vals = [];
+    for (var i = 1; i <= n; i++) { var f = M.forme[iso(addDays(parseD(ds), -i))]; if (f && f[key] != null) vals.push(f[key]); }
+    return vals.length >= 5 ? vals.reduce(function (a, b) { return a + b; }, 0) / vals.length : null;
+  }
+  function fmtSleep(min) { if (min == null) return '—'; var h = Math.floor(min / 60), m = Math.round(min % 60); return h + ' h ' + pad(m); }
+  function ring(v, size) {
+    var p = v == null ? 0 : Math.max(0, Math.min(100, v)), inner = Math.round(size * 0.8);
+    return '<div class="ring" style="width:' + size + 'px;height:' + size + 'px;background:conic-gradient(' + recColor(v) + ' 0 ' + p + '%, var(--line) ' + p + '% 100%)"><div style="width:' + inner + 'px;height:' + inner + 'px"><span class="num" style="font-size:' + Math.round(size * 0.33) + 'px">' + (v == null ? '–' : v) + '<span style="font-size:' + Math.round(size * 0.18) + 'px">%</span></span>' + (size >= 90 ? '<span class="small muted" style="font-size:11px">recovery</span>' : '') + '</div></div>';
+  }
+  function ratioColor(r, rating) { return r == null ? 'var(--muted)' : r >= 1.5 || /high/i.test(rating) ? 'var(--red-ink)' : /low/i.test(rating) ? 'var(--blue)' : 'var(--green)'; }
+  function ratingFr(r) { return /high/i.test(r) ? 'Élevée' : /low/i.test(r) ? 'Basse' : /optimal/i.test(r) ? 'Optimale' : (r || ''); }
+
+  // Bouton de l'accueil
+  function formeButton() {
+    var f = formeLatest(); if (!f) return '';
+    var t = iso(today()), L = recLabel(f.recovery);
+    var bits = [];
+    if (f.vfc != null) bits.push('VFC ' + f.vfc + ' ms');
+    if (f.sleep != null) bits.push('sommeil ' + fmtSleep(f.sleep));
+    if (f.ratio != null) bits.push('charge ' + fmtNum(f.ratio, 1));
+    return '<a class="forme-btn" href="#forme" aria-label="Ouvrir la forme du jour">' + ring(f.recovery, 60) +
+      '<span class="stack" style="gap:4px;min-width:0;flex:1"><span class="row" style="gap:8px;flex-wrap:wrap"><b style="font-size:16px">' + (f.date === t ? 'Forme du jour' : 'Forme du ' + fmtDayMid(f.date)) + '</b><span class="pill ' + L[1] + '" style="background:' + L[2] + '">' + L[0] + '</span></span>' +
+      '<span class="small muted">' + esc(bits.join(' · ')) + '</span></span>' + icon(I.right).replace('<svg', '<svg class="chev-r"') + '</a>';
+  }
+  function dayDot(ds) {
+    var f = formeOn(ds);
+    return f && f.recovery != null ? '<span class="rd" style="background:' + recColor(f.recovery) + '" title="Recovery ' + f.recovery + ' %"></span>' : '';
+  }
+
+  function repere(f) {
+    var r = f.recovery, short = f.sleep != null && (f.sleep < 420 || (f.sgoal && f.sleep < f.sgoal - 90)), t;
+    if (r == null) t = 'Pas de recovery calculée pour ce jour.';
+    else if (r <= 33) t = 'Récup basse : privilégie la technique et des charges modérées, garde les max pour un autre jour.';
+    else if (r < 67) t = short ? 'Récup moyenne et nuit courte : les charges prévues par la prog restent jouables, mais ce n’est pas le jour idéal pour aller chercher un max.' : 'Récup moyenne : suis la prog normalement et écoute tes sensations sur les blocs lourds.';
+    else t = short ? 'Bonne récup malgré une nuit courte : tu peux pousser, en surveillant tes sensations.' : 'Bonne récup : bon jour pour pousser si la prog le permet.';
+    if (f.ratio != null && f.ratio >= 1.5) t += ' Ta charge récente est élevée (ratio ' + fmtNum(f.ratio, 1) + ') : attention à l’accumulation.';
+    return t;
+  }
+  function deltaTxt(v, avg, higherBetter, unit) {
+    if (v == null || avg == null) return '<span class="small muted">&nbsp;</span>';
+    var d = Math.round(v - avg), good = higherBetter ? d >= 0 : d <= 0;
+    return '<span class="small ' + (d === 0 ? 'muted' : good ? 'ok' : 'amber') + '">' + (d > 0 ? '+' : '') + d + (unit || '') + ' vs 30 j</span>';
+  }
+  function watchRow(w, withLink) {
+    return '<span class="t"><b>' + esc(w.heure || '') + ' · ' + esc(wLabel(w.type)) + ' · ' + (w.dur != null ? w.dur + ' min' : '—') + '</b><span>' + [w.kcal != null ? w.kcal + ' kcal' : '', w.effort != null ? 'effort ' + fmtNum(w.effort, 1) : 'effort en calcul', w.km && wKind(w) === 'endu' ? fmtNum(w.km, 1) + ' km' : ''].filter(Boolean).join(' · ') + (withLink ? ' · ' + esc(withLink) : '') + '</span></span>';
+  }
+
+  function viewForme() {
+    var all = Object.keys(M.forme).sort(), t = iso(today());
+    if (!all.length) return '<header class="row"><a class="icon-btn" href="#accueil" aria-label="Retour à l’accueil">' + icon(I.left) + '</a><h1 class="h1" style="font-size:34px">Forme du jour</h1></header><div class="empty">Pas encore de données Athlytic.<a class="btn primary" href="#moi">Importer un export</a></div>';
+    if (!S.formeDay || !M.forme[S.formeDay]) { var f0 = formeLatest(); S.formeDay = f0 ? f0.date : all[all.length - 1]; }
+    var f = M.forme[S.formeDay], i = all.indexOf(S.formeDay), L = recLabel(f.recovery);
+    var h = '<div class="between" style="align-items:flex-start"><header class="row" style="align-items:flex-start"><a class="icon-btn" href="#accueil" aria-label="Retour à l’accueil">' + icon(I.left) + '</a><span class="stack" style="gap:4px"><h1 class="h1" style="font-size:34px">Forme du jour</h1><span class="small muted">' + cap(DOWL[parseD(f.date).getDay()]) + ' ' + parseD(f.date).getDate() + ' ' + MOL[parseD(f.date).getMonth()] + ' · Athlytic</span></span></header>' +
+      '<div class="row" style="gap:6px"><button class="icon-btn" data-act="formed" data-v="-1" aria-label="Jour précédent"' + (i <= 0 ? ' disabled' : '') + '>' + icon(I.left) + '</button><button class="icon-btn" data-act="formed" data-v="1" aria-label="Jour suivant"' + (i >= all.length - 1 || all[i + 1] > t ? ' disabled' : '') + '>' + icon(I.right) + '</button></div></div>';
+
+    var aRec = formeAvg(f.date, 'recovery', 30), aV = formeAvg(f.date, 'vfc', 30), aF = formeAvg(f.date, 'fc', 30);
+    h += '<section class="card" style="gap:16px"><div class="row" style="gap:16px;align-items:center">' + ring(f.recovery, 104) +
+      '<div class="stack" style="gap:6px;min-width:0"><span class="pill ' + L[1] + '" style="align-self:flex-start;background:' + L[2] + '">' + L[0] + '</span><span style="font-size:14px;color:var(--ink-2)">' +
+      (aRec != null && f.recovery != null ? (f.recovery >= aRec ? 'Au-dessus' : 'En dessous') + ' de ta moyenne sur 30 jours (' + Math.round(aRec) + ' %).' : '') +
+      (f.sleep != null ? ' Nuit de ' + fmtSleep(f.sleep) + (f.sgoal ? ' pour un objectif de ' + fmtSleep(f.sgoal) : '') + '.' : '') + '</span></div></div>';
+    h += '<div class="grid3">' +
+      '<div class="mini"><span class="label" style="font-size:11px">VFC</span><span class="num" style="font-size:26px">' + (f.vfc != null ? f.vfc + '<span class="u"> ms</span>' : '—') + '</span>' + deltaTxt(f.vfc, aV, true) + '</div>' +
+      '<div class="mini"><span class="label" style="font-size:11px">FC repos</span><span class="num" style="font-size:26px">' + (f.fc != null ? f.fc + '<span class="u"> bpm</span>' : '—') + '</span>' + deltaTxt(f.fc, aF, false) + '</div>' +
+      '<div class="mini"><span class="label" style="font-size:11px">Charge</span><span class="num" style="font-size:26px">' + (f.ratio != null ? fmtNum(f.ratio, 1) : '—') + '</span><span class="small" style="color:' + ratioColor(f.ratio, f.rating) + '">' + esc(ratingFr(f.rating)) + '</span></div></div>';
+    if (f.sleep != null) {
+      var parts = [['Profond', f.deep, 'var(--blue)'], ['REM', f.rem, 'var(--teal)'], ['Léger', f.core, '#52525B'], ['Éveillé', f.awake, 'var(--amber)']].filter(function (p) { return p[1]; });
+      var tot = parts.reduce(function (a, p) { return a + p[1]; }, 0) || 1;
+      h += '<div class="stack" style="gap:8px"><div class="between"><span class="label">Sommeil</span><span class="small" style="color:var(--ink-2)"><b style="color:var(--ink)">' + fmtSleep(f.sleep) + '</b>' + (f.sq != null ? ' · qualité ' + f.sq : '') + '</span></div>' +
+        '<div class="sleepbar" role="img" aria-label="Phases de sommeil">' + parts.map(function (p) { return '<div style="width:' + (p[1] / tot * 100).toFixed(1) + '%;background:' + p[2] + '"></div>'; }).join('') + '</div>' +
+        '<div class="legend2">' + parts.map(function (p) { return '<span><i style="background:' + p[2] + '"></i>' + p[0] + ' ' + (p[1] >= 60 ? fmtSleep(p[1]) : p[1] + ' min') + '</span>'; }).join('') + '</div></div>';
+    }
+    if (f.ex != null) {
+      var inT = f.exMin != null && f.exMax != null ? (f.ex < f.exMin ? 'Sous la fourchette conseillée pour ta récup.' : f.ex > f.exMax ? 'Au-dessus de la fourchette conseillée pour ta récup.' : 'Dans la fourchette conseillée pour ta récup.') : '';
+      h += '<div class="stack" style="gap:8px"><div class="between"><span class="label">Exertion</span><span class="small" style="color:var(--ink-2)"><b style="color:var(--ink)">' + fmtNum(f.ex, 1) + '</b> / 10' + (f.exMin != null ? ' · cible ' + fmtNum(f.exMin, 1) + ' à ' + fmtNum(f.exMax, 1) : '') + '</span></div>' +
+        '<div class="gauge" role="img" aria-label="Exertion ' + fmtNum(f.ex, 1) + ' sur 10">' + (f.exMin != null ? '<div class="band" style="left:' + f.exMin * 10 + '%;width:' + (f.exMax - f.exMin) * 10 + '%"></div>' : '') + '<div class="fill" style="width:' + Math.min(100, f.ex * 10) + '%"></div><div class="mark" style="left:calc(' + Math.min(100, f.ex * 10) + '% - 2px)"></div></div>' +
+        (inT ? '<span class="small muted">' + inT + '</span>' : '') + '</div>';
+    }
+    h += '<div class="hint">' + icon('M12 8v4M12 16h.01M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z') + '<span>Repère : ' + esc(repere(f)) + '</span></div></section>';
+
+    // Séances montre du jour
+    var ws = M.montreBy[f.date] || [];
+    h += '<section class="stack"><h2 class="label">Séances montre</h2>';
+    if (ws.length) {
+      h += '<div class="list">' + ws.map(function (w) {
+        var blocks = M.seances.filter(function (s) { if (s.date_faite !== f.date) return false; var bw = blockWatch(s); return bw && bw.list.indexOf(w) >= 0; }).map(function (s) { return s.nom; });
+        return '<button class="li" data-act="gowod" data-v="' + f.date + '">' + watchRow(w, blocks.join(' + ')) + icon(I.right).replace('<svg', '<svg class="chev-r"') + '</button>';
+      }).join('') + '</div>';
+    } else h += '<span class="small muted">Aucune séance enregistrée par la montre ce jour-là.</span>';
+    h += '</section>';
+
+    // 7 jours
+    var week = [];
+    for (var k = 6; k >= 0; k--) { var d = iso(addDays(parseD(f.date), -k)), fx = M.forme[d]; week.push({ d: d, v: fx ? fx.recovery : null }); }
+    h += '<section class="stack"><h2 class="label">7 derniers jours</h2><div class="card" style="gap:6px;padding:14px 12px 10px"><div class="bars7" role="img" aria-label="Recovery des 7 derniers jours">' + week.map(function (x) {
+      return '<div><span class="small">' + (x.v != null ? x.v : '–') + '</span><i style="height:' + (x.v != null ? Math.max(3, Math.round(x.v * 0.7)) : 3) + 'px;background:' + (x.v != null ? recColor(x.v) : 'var(--line)') + '"></i><span class="small muted">' + DOWL[parseD(x.d).getDay()].slice(0, 3) + '.</span></div>';
+    }).join('') + '</div></div><a class="small" href="#analyse" style="font-weight:600;align-self:flex-start;min-height:44px;display:flex;align-items:center">Voir l’analyse forme et perfs</a></section>';
+    return h;
+  }
+
+  // Ligne « séance montre » dans une carte de bloc fait
+  function watchBlock(b) {
+    if (b.source === 'PR') return '';
+    var bw = blockWatch(b), f = b.done ? formeOn(b.date_faite) : null;
+    if (!bw && !f) return '';
+    var h = '<div class="watch">';
+    if (bw) {
+      var tot = bw.list.reduce(function (a, w) { return a + (w.dur || 0); }, 0), kc = bw.list.reduce(function (a, w) { return a + (w.kcal || 0); }, 0);
+      var eff = bw.list.length === 1 ? bw.list[0].effort : null;
+      h += '<div class="row" style="gap:8px;align-items:flex-start">' + icon('M12 9v3l2 1M9 2h6M9 22h6M12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14z') + '<span class="small" style="color:var(--ink-2)">Montre · ' + bw.list.map(function (w) { return esc(w.heure) + ' ' + esc(wLabel(w.type)); }).join(' + ') + ' · <b style="color:var(--ink)">' + tot + ' min</b>' + (kc ? ' · ' + kc + ' kcal' : '') + (eff != null ? ' · effort ' + fmtNum(eff, 1) : '') + (bw.shared > 1 ? ' · séance commune à ' + bw.shared + ' blocs' : '') + '</span></div>';
+      if (eff != null && b.rpe_ressenti) {
+        h += '<div class="vs"><span>RPE ressenti</span><div><i style="width:' + b.rpe_ressenti * 10 + '%;background:var(--red-ink)"></i></div><b>' + b.rpe_ressenti + '</b><span>Effort montre</span><div><i style="width:' + eff * 10 + '%;background:var(--blue)"></i></div><b>' + fmtNum(eff, 1) + '</b></div>';
+        if (b.rpe_ressenti - eff >= 4 && (b.type_bloc === 'haltero' || b.type_bloc === 'gym' || b.type_bloc === 'renfo')) h += '<span class="small muted">Écart normal sur un bloc de force ou de gym : la difficulté est musculaire, le cardio monte peu.</span>';
+      }
+    }
+    if (f) h += '<button class="linkish small" data-act="openforme" data-v="' + f.date + '">Forme ce jour-là : recovery <b style="color:' + recColor(f.recovery) + '">' + (f.recovery != null ? f.recovery + ' %' : '–') + '</b>' + (f.sleep != null ? ' · nuit ' + fmtSleep(f.sleep) : '') + (f.vfc != null ? ' · VFC ' + f.vfc : '') + '</button>';
+    return h + '</div>';
+  }
+
+  // Section Analyse
+  function analyseForme() {
+    var ks = Object.keys(M.forme).sort(); if (!ks.length) return '';
+    var last = ks.slice(-60), from = last[0], to = last[last.length - 1];
+    var prs = prEvents(from, to).filter(function (p) { return !p.tie; });
+    var prDays = {}; prs.forEach(function (p) { prDays[p.a.date] = 1; });
+    var h = '<section class="stack"><div class="between"><h2 class="label">Forme · recovery par jour</h2><span class="small muted">● = PR ce jour-là</span></div>';
+    h += '<div class="card" style="gap:8px;padding:16px 12px 12px"><div class="bars60" role="img" aria-label="Recovery quotidienne">' + last.map(function (d) {
+      var v = M.forme[d].recovery;
+      return '<div>' + (prDays[d] ? '<b class="prdot"></b>' : '') + '<i style="height:' + (v != null ? Math.max(2, Math.round(v * 1.2)) : 2) + 'px;background:' + (v != null ? recColor(v) : 'var(--line)') + '"></i></div>';
+    }).join('') + '</div><div class="between small muted" style="font-size:11px"><span>' + fmtDayMid(from) + '</span><span>' + fmtDayMid(to) + '</span></div>' +
+      '<div class="legend2"><span><i style="background:var(--green)"></i>67 % et plus</span><span><i style="background:var(--amber)"></i>34 à 66 %</span><span><i style="background:var(--red-ink)"></i>33 % et moins</span></div></div>';
+    function avg(arr, k) { var v = arr.map(function (d) { return M.forme[d][k]; }).filter(function (x) { return x != null; }); return v.length ? v.reduce(function (a, b) { return a + b; }, 0) / v.length : null; }
+    if (last.length >= 20) {
+      var half = Math.floor(last.length / 2), A = last.slice(0, half), B = last.slice(half);
+      h += '<div class="grid2"><div class="tile"><span class="cap">' + fmtDayMid(A[0]) + ' → ' + fmtDayMid(A[A.length - 1]) + '</span><span class="num">' + Math.round(avg(A, 'recovery')) + ' %</span><span class="cap">recovery moyenne</span></div><div class="tile"><span class="cap">' + fmtDayMid(B[0]) + ' → ' + fmtDayMid(B[B.length - 1]) + '</span><span class="num">' + Math.round(avg(B, 'recovery')) + ' %</span><span class="cap">recovery moyenne</span></div></div>';
+    }
+    h += '</section>';
+    if (prs.length) {
+      h += '<section class="stack"><h2 class="label">Tes PR et ta forme</h2><div class="list">' + prs.slice(-6).reverse().map(function (p) {
+        var f = M.forme[p.a.date];
+        return '<button class="li" data-act="openforme" data-v="' + p.a.date + '"><span class="t"><b>' + esc(recordTitle(p.r)) + '</b><span>' + fmtDayMid(p.a.date) + (f ? ' · recovery <b style="color:' + recColor(f.recovery) + '">' + (f.recovery != null ? f.recovery + ' %' : '–') + '</b>' + (f.sleep != null ? ' · nuit ' + fmtSleep(f.sleep) : '') + (f.vfc != null ? ' · VFC ' + f.vfc : '') : '') + '</span></span><span class="v red">' + esc(recordValue(p.r, p.a.value, p.a)) + '</span></button>';
+      }).join('') + '</div></section>';
+    }
+    var hi = last.filter(function (d) { return M.forme[d].ratio != null && M.forme[d].ratio >= 1.5; });
+    h += '<section class="stack"><div class="between"><h2 class="label">Charge (7 j / 6 sem.)</h2><span class="small muted">seuil 1,5</span></div><div class="card" style="gap:8px;padding:16px 12px 12px"><div class="bars60 load" role="img" aria-label="Ratio de charge"><span class="thr"></span>' + last.map(function (d) {
+      var r = M.forme[d].ratio;
+      return '<div><i style="height:' + (r != null ? Math.min(110, Math.round(r * 60)) : 2) + 'px;background:' + (r == null ? 'var(--line)' : r >= 1.5 ? 'var(--red-ink)' : r < 0.8 ? 'var(--blue)' : '#52525B') + '"></i></div>';
+    }).join('') + '</div><div class="between small muted" style="font-size:11px"><span>' + fmtDayMid(from) + '</span><span>' + fmtDayMid(to) + '</span></div>' +
+      '<span class="small" style="color:var(--ink-2)">' + (hi.length ? hi.length + ' jour' + (hi.length > 1 ? 's' : '') + ' au-dessus de 1,5 : ' + hi.map(fmtDayMid).join(', ') + '.' : 'Aucun jour au-dessus de 1,5.') + '</span></div></section>';
+    var sl = last.map(function (d) { return M.forme[d].sleep; }).filter(function (x) { return x != null; });
+    h += '<div class="list"><div class="li"><span>Nuits sous 7 h</span><span class="v">' + sl.filter(function (x) { return x < 420; }).length + '<span style="color:var(--faint)"> / ' + sl.length + '</span></span></div>' +
+      '<div class="li"><span>Jours sous 33 % de recovery</span><span class="v red">' + last.filter(function (d) { return M.forme[d].recovery != null && M.forme[d].recovery <= 33; }).length + '</span></div>' +
+      (sl.length ? '<div class="li"><span>Sommeil moyen</span><span class="v">' + fmtSleep(sl.reduce(function (a, b) { return a + b; }, 0) / sl.length) + '</span></div>' : '') + '</div>';
+    return h;
+  }
+
+  // Onglet Moi : import Athlytic
+  function moiAthlytic() {
+    var ks = Object.keys(M.forme).sort();
+    var h = '<section class="card"><h2 class="label">Données Athlytic</h2>';
+    if (ks.length) h += '<div class="row" style="gap:10px"><span class="rd big" style="background:var(--green)"></span><span class="stack" style="gap:2px"><b>Jusqu’au ' + fmtDay(ks[ks.length - 1]) + '</b><span class="small muted">' + ks.length + ' jours de forme · ' + M.montre.length + ' séances montre</span></span></div>';
+    else h += '<span class="muted small">Aucune donnée importée pour l’instant.</span>';
+    if (M.gateway < 3 && !demoUrl()) h += '<div class="notice">Pour importer depuis l’app, mets à jour la passerelle : colle le nouveau Code.gs (v3) dans Apps Script, puis Déployer › Gérer les déploiements › Modifier › Nouvelle version.</div>';
+    h += '<label class="btn primary" style="cursor:pointer">' + icon('M12 3v12M7 10l5 5 5-5M5 21h14') + 'Importer un export Athlytic (.json)<input type="file" id="m-athl" accept=".json,application/json" hidden></label>';
+    h += '<span class="small muted">Dans Athlytic : More › Export Data › Last 60 Days › Share Data, enregistre le fichier dans Fichiers puis choisis-le ici. Les jours déjà importés sont mis à jour, jamais dupliqués. Ces données de santé restent dans ton Google Sheet (onglets Forme et Montre).</span></section>';
+    return h;
+  }
+  function athlyticRows(j) {
+    function g(o, k) { var v = (o || {})[k]; return v == null ? '' : v; }
+    var forme = [], montre = [];
+    (j.days || []).forEach(function (x) {
+      var r = x.recovery, s = x.sleep, e = x.exertion, t = x.training_load;
+      forme.push({ date: x.date, recovery: g(r, 'score'), vfc_ms: g(r, 'hrv_ms'), fc_repos: g(r, 'resting_hr_bpm'), sommeil_min: g(s, 'asleep_min'), profond_min: g(s, 'deep_min'), rem_min: g(s, 'rem_min'), core_min: g(s, 'core_min'), eveil_min: g(s, 'awake_min'), qualite_sommeil: g(s, 'quality_score'), perf_sommeil_pct: g(s, 'performance_pct'), objectif_sommeil_min: g(s, 'target_min'), exertion: g(e, 'score'), exertion_min: g(e, 'target_min'), exertion_max: g(e, 'target_max'), trimp: g(t, 'daily_trimp'), charge_7j: g(t, 'short_term'), charge_6sem: g(t, 'long_term'), ratio_charge: g(t, 'ratio'), statut_charge: g(t, 'rating') });
+      (x.workouts || []).forEach(function (w) {
+        var hm = String(w.start || '').slice(11, 16);
+        montre.push({ date: x.date, heure: hm, id: 'ath-' + x.date + '-' + hm.replace(':', ''), type: w.type || '', duree_min: g(w, 'duration_min'), effort: g(w, 'effort'), kcal: g(w, 'active_energy'), distance_km: g(w, 'distance'), source: 'Athlytic' });
+      });
+    });
+    return { forme: forme, montre: montre };
+  }
+  function importAthlytic(file) {
+    if (!file) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      var j; try { j = JSON.parse(rd.result); } catch (e) { toast('Fichier illisible : choisis l’export JSON d’Athlytic.'); return; }
+      if (!j || !j.days || j.source !== 'Athlytic') { toast('Ce fichier n’est pas un export Athlytic.'); return; }
+      var rows = athlyticRows(j);
+      toast('Import de ' + rows.forme.length + ' jours…');
+      apiPost({ action: 'athlytic', forme: rows.forme, montre: rows.montre }).then(function () {
+        toast(rows.forme.length + ' jours et ' + rows.montre.length + ' séances importés'); load(false);
+      }).catch(function (err) { toast('Import impossible : ' + err.message); });
+    };
+    rd.readAsText(file);
+  }
+
   // ---------- Modal ----------
   function openSheet(html) { var el = $('#sheet'); el.innerHTML = '<div class="panel" role="dialog" aria-modal="true">' + html + '</div>'; el.hidden = false; document.body.classList.add('noscroll'); bindSheet(); }
   function closeSheet() { var el = $('#sheet'); el.hidden = true; el.innerHTML = ''; document.body.classList.remove('noscroll'); }
@@ -1307,6 +1594,7 @@
     var fm = $('#f-rm'); if (fm) fm.onsubmit = saveRm;
     var fg = $('#f-goal'); if (fg) fg.onsubmit = addGoal;
     var ph = $('#m-photo'); if (ph) ph.onchange = function () { setPhoto(ph.files[0]); };
+    var ax = $('#m-athl'); if (ax) ax.onchange = function () { importAthlytic(ax.files[0]); ax.value = ''; };
   }
   function keepScroll(fn) { var y = window.scrollY; fn(); window.scrollTo(0, y); }
   function act(el, e) {
@@ -1374,13 +1662,18 @@
       case 'goaladd': S.goalForm = !S.goalForm; keepScroll(render); break;
       case 'goaldel': var gl = M.goals.slice(); gl.splice(+v, 1); saveGoals(gl, 'Objectif supprimé'); break;
       case 'refresh': load(true); break;
+      case 'formed': var fk = Object.keys(M.forme).sort(), fi = fk.indexOf(S.formeDay) + (+v); if (fi >= 0 && fi < fk.length) { S.formeDay = fk[fi]; keepScroll(render); } break;
+      case 'openforme': S.formeDay = v; S.formeHold = true; if (location.hash === '#forme') { S.formeHold = false; keepScroll(render); } else location.hash = '#forme'; break;
+      case 'gowod': S.wodDay = v; S.wodWeek = Math.round((monday(parseD(v)) - monday(today())) / (7 * 864e5)); location.hash = '#wod'; break;
     }
   }
   function route() {
     var t = (location.hash || '#accueil').slice(1) || 'accueil';
-    if (['accueil', 'wod', 'ajouter', 'pr', 'analyse', 'moi'].indexOf(t) < 0) t = 'accueil';
+    if (['accueil', 'wod', 'ajouter', 'pr', 'analyse', 'moi', 'forme'].indexOf(t) < 0) t = 'accueil';
     if (t !== 'pr' && S.tab === 'pr') S.prKey = null;
     if (t === 'ajouter' && (!F || !F.mode)) F = { mode: 'wod' };
+    if (t === 'forme' && !S.formeHold) S.formeDay = null;
+    S.formeHold = false;
     S.tab = t; closeSheet(); render(); window.scrollTo(0, 0);
   }
 

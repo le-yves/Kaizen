@@ -1,5 +1,5 @@
 /**
- * Kaizen v2 — passerelle entre l'app et le Google Sheet.
+ * Kaizen v3 — passerelle entre l'app et le Google Sheet.
  * À coller dans Extensions > Apps Script du Google Sheet "Kaizen".
  *
  * 1. Exécuter une fois la fonction creerCodeSecret() : le code s'affiche dans le journal d'exécution.
@@ -7,6 +7,10 @@
  *    - Exécuter en tant que : Moi
  *    - Qui a accès : Tout le monde
  * 3. Copier l'URL de l'application Web et le code secret dans l'onglet "Moi" de Kaizen.
+ *
+ * Mise à jour (v2 → v3, Kaizen 2.4) : remplacer tout ce fichier, enregistrer, puis
+ * Déployer > Gérer les déploiements > crayon (Modifier) > Version : Nouvelle version > Déployer.
+ * L'URL et le code secret ne changent pas.
  */
 
 var SHEETS = {
@@ -15,19 +19,23 @@ var SHEETS = {
   Classements: { key: null },
   Reglages: { key: 'cle' },
   Mouvements: { key: null, optional: true },
-  Athletes: { key: 'nom', optional: true }
+  Athletes: { key: 'nom', optional: true },
+  Forme: { key: 'date', optional: true },
+  Montre: { key: 'id', optional: true }
 };
 
 // En-têtes créés automatiquement si un onglet v2 manque.
 var HEADERS = {
   Mouvements: ['bloc_id', 'ordre', 'mouvement', 'reps', 'charge_kg', 'nb_db', 'unite', 'charge_prog', 'reps_rounds', 'charges_rounds'],
-  Athletes: ['nom', 'sexe']
+  Athletes: ['nom', 'sexe'],
+  Forme: ['date', 'recovery', 'vfc_ms', 'fc_repos', 'sommeil_min', 'profond_min', 'rem_min', 'core_min', 'eveil_min', 'qualite_sommeil', 'perf_sommeil_pct', 'objectif_sommeil_min', 'exertion', 'exertion_min', 'exertion_max', 'trimp', 'charge_7j', 'charge_6sem', 'ratio_charge', 'statut_charge'],
+  Montre: ['date', 'heure', 'id', 'type', 'duree_min', 'effort', 'kcal', 'distance_km', 'source']
 };
 
 // Colonnes à garder en texte brut (sinon Sheets transforme "7:09" en heure ou "2026-11-09" en date).
 var TEXT_COLS = ['id', 'date_prog', 'date_faite', 'date', 'heure', 'source', 'statut', 'nom', 'type_bloc',
   'description', 'type_score', 'score_affiche', 'niveau', 'charges', 'km_detail', 'cal_detail', 'notes',
-  'sport', 'fichier', 'bloc_id', 'rx', 'moi', 'cle', 'mouvement', 'unite', 'sexe', 'valeur', 'reps_rounds', 'charges_rounds', 'score_tours'];
+  'sport', 'fichier', 'bloc_id', 'rx', 'moi', 'cle', 'mouvement', 'unite', 'sexe', 'valeur', 'reps_rounds', 'charges_rounds', 'score_tours', 'type', 'statut_charge'];
 
 function creerCodeSecret() {
   var token = Utilities.getUuid().replace(/-/g, '').slice(0, 24);
@@ -162,6 +170,30 @@ function replaceRows_(name, blocId, rows) {
 
 function replaceClassement_(blocId, rows) { return replaceRows_('Classements', blocId, rows); }
 
+// Import en masse (Athlytic) : met à jour les lignes existantes par clé, ajoute les nouvelles, en une seule écriture.
+function bulkUpsert_(name, rows) {
+  var sh = sheet_(name), h = headers_(sh), keyCol = SHEETS[name].key, k = h.indexOf(keyCol);
+  if (k < 0) throw new Error('Colonne ' + keyCol + ' absente de ' + name);
+  var last = sh.getLastRow();
+  var data = last >= 2 ? sh.getRange(2, 1, last - 1, h.length).getValues() : [];
+  var idx = {};
+  data.forEach(function (r, i) { idx[String(cellOut_(r[k]))] = i; });
+  var created = 0, updated = 0;
+  (rows || []).forEach(function (o) {
+    var key = String(o[keyCol] || '');
+    if (!key) return;
+    if (idx.hasOwnProperty(key)) { data[idx[key]] = rowArray_(h, o, data[idx[key]]); updated++; }
+    else { idx[key] = data.length; data.push(rowArray_(h, o, null)); created++; }
+  });
+  if (data.length) {
+    var fm = h.map(function (col) { return TEXT_COLS.indexOf(col) >= 0 ? '@' : 'General'; });
+    var rg = sh.getRange(2, 1, data.length, h.length);
+    rg.setNumberFormats(data.map(function () { return fm; }));
+    rg.setValues(data.map(function (r) { return r.map(function (v, i) { return v instanceof Date && fm[i] === '@' ? cellOut_(v) : v; }); }));
+  }
+  return { sheet: name, created: created, updated: updated };
+}
+
 function doGet(e) {
   try {
     checkToken_(e.parameter.token);
@@ -171,11 +203,13 @@ function doGet(e) {
       classements: readSheet_('Classements'),
       mouvements: readOptional_('Mouvements'),
       athletes: readOptional_('Athletes'),
+      forme: readOptional_('Forme'),
+      montre: readOptional_('Montre'),
       reglages: {}
     };
     readSheet_('Reglages').forEach(function (r) { if (r.cle) data.reglages[r.cle] = r.valeur; });
     data.lu_le = new Date().toISOString();
-    data.version_passerelle = 2;
+    data.version_passerelle = 3;
     return json_({ ok: true, data: data });
   } catch (err) {
     return json_({ ok: false, erreur: String(err.message || err) });
@@ -196,6 +230,7 @@ function doPost(e) {
       case 'reglage': result = upsert_('Reglages', { cle: body.cle, valeur: body.valeur }); break;
       case 'mouvements': result = replaceRows_('Mouvements', body.bloc_id, body.rows); break;
       case 'athlete': result = upsert_('Athletes', { nom: body.nom, sexe: body.sexe }); break;
+      case 'athlytic': result = [bulkUpsert_('Forme', body.forme), bulkUpsert_('Montre', body.montre)]; break;
       default: throw new Error('Action inconnue : ' + body.action);
     }
     return json_({ ok: true, result: result });
