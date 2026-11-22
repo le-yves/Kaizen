@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.4.2';
+  var VERSION = '2.4.3';
   var CFG_KEY = 'kaizen.config';
   var UI_KEY = 'kaizen.ui';
   var PHOTO_KEY = 'kaizen.photo';
@@ -471,7 +471,7 @@
     var goalP = isWeek ? goal : Math.round(goal * r.b.getDate() / 7);
     var word = isWeek ? 'semaine' : 'mois', ce = isWeek ? 'cette semaine' : 'ce mois-ci';
     var h = '';
-    h += '<div class="between"><span class="brand">KAIZEN <small>改善</small></span><a class="icon-btn" href="#moi" aria-label="Réglages">' + icon(I.gear) + '</a></div>';
+    h += '<div class="between"><span class="row" style="gap:10px;align-items:center"><span class="brand">KAIZEN <small>改善</small></span><span class="ver">v' + VERSION + '</span></span><a class="icon-btn" href="#moi" aria-label="Réglages">' + icon(I.gear) + '</a></div>';
     h += '<header class="row" style="gap:14px;margin-top:-8px;align-items:center">' + avatarHtml() + '<div class="stack" style="gap:2px"><span class="label">Salut</span><h1 class="h1">' + esc(name) + '</h1></div>' + syncBtn() + '</header>';
     h += syncLine();
     h += formeButton();

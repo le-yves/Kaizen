@@ -273,3 +273,6 @@ details summary { color: var(--ink-2); }
 
 /* v2.4.2 : jours de l'accueil cliquables */
 .cal > button { height: 32px; border-radius: 7px; border: 0; padding: 0; display: flex; align-items: center; justify-content: center; font: inherit; font-size: 12px; font-weight: 600; color: var(--faint); background: var(--surface); cursor: pointer; }
+
+/* v2.4.3 : numéro de version sur l'accueil */
+.ver { font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--muted); border: 1px solid var(--line-2); border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
