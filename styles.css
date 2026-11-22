@@ -114,9 +114,9 @@ textarea.input { min-height: 120px; resize: vertical; line-height: 1.45; }
 .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }
 .cal div { height: 32px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; color: var(--faint); background: var(--surface); }
 .cal div.off { background: transparent; }
-.cal div.t { background: var(--red); color: #fff; }
-.cal div.today { outline: 1.5px solid var(--ink); }
-.cal div.future { background: transparent; color: #52525B; }
+.cal > .t { background: var(--red); color: #fff; }
+.cal > .today { outline: 1.5px solid var(--ink); }
+.cal > .future { background: transparent; color: #52525B; }
 
 /* Bars */
 .bar { height: 8px; background: var(--line); border-radius: 4px; flex: 1; overflow: hidden; }
@@ -270,3 +270,6 @@ details summary { color: var(--ink-2); }
 .sync-btn.spin svg { animation: kz-spin 1s linear infinite; }
 @keyframes kz-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .sync-btn.spin svg { animation: none; } }
+
+/* v2.4.2 : jours de l'accueil cliquables */
+.cal > button { height: 32px; border-radius: 7px; border: 0; padding: 0; display: flex; align-items: center; justify-content: center; font: inherit; font-size: 12px; font-weight: 600; color: var(--faint); background: var(--surface); cursor: pointer; }

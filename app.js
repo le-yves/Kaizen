@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.4.1';
+  var VERSION = '2.4.2';
   var CFG_KEY = 'kaizen.config';
   var UI_KEY = 'kaizen.ui';
   var PHOTO_KEY = 'kaizen.photo';
@@ -486,16 +486,16 @@
       h += '<div class="days">';
       for (var i = 0; i < 7; i++) {
         var d = addDays(r.a, i), ds = iso(d), trained = st.days[ds], isT = ds === t;
-        h += '<div class="day' + (trained ? ' trained' : '') + (isT ? ' today' : '') + '" style="cursor:default"><span class="d">' + DOW[d.getDay()] + '</span><span class="n">' + d.getDate() + '</span><span class="small" style="font-size:10px">' + (trained ? '✓' : isT ? 'auj.' : '') + '</span>' + dayDot(ds) + '</div>';
+        h += '<button type="button" class="day' + (trained ? ' trained' : '') + (isT ? ' today' : '') + '" data-act="gowod" data-v="' + ds + '" aria-label="Voir le ' + DOWL[d.getDay()] + ' ' + d.getDate() + ' dans WOD"><span class="d">' + DOW[d.getDay()] + '</span><span class="n">' + d.getDate() + '</span><span class="small" style="font-size:10px">' + (trained ? '✓' : isT ? 'auj.' : '') + '</span>' + dayDot(ds) + '</button>';
       }
       h += '</div>';
     } else {
-      h += '<div class="cal" role="img" aria-label="' + nDays + ' jours d’entraînement">';
+      h += '<div class="cal" aria-label="' + nDays + ' jours d’entraînement">';
       var off = (r.a.getDay() + 6) % 7;
       for (var k = 0; k < off; k++) h += '<div class="off"></div>';
       for (var dd = 1; dd <= r.b.getDate(); dd++) {
         var ds2 = iso(new Date(r.a.getFullYear(), r.a.getMonth(), dd));
-        h += '<div class="' + (st.days[ds2] ? 't' : ds2 > t ? 'future' : '') + (ds2 === t ? ' today' : '') + '">' + dd + '</div>';
+        h += '<button type="button" class="' + (st.days[ds2] ? 't' : ds2 > t ? 'future' : '') + (ds2 === t ? ' today' : '') + '" data-act="gowod" data-v="' + ds2 + '" aria-label="Voir le ' + dd + ' dans WOD">' + dd + '</button>';
       }
       h += '</div>';
     }
@@ -669,7 +669,7 @@
     h += '<div class="between"><button class="icon-btn" data-act="wprev" aria-label="Semaine précédente">' + icon(I.left) + '</button><b>Semaine du ' + a.getDate() + (a.getMonth() !== e.getMonth() ? ' ' + MO[a.getMonth()] : '') + ' au ' + e.getDate() + ' ' + MO[e.getMonth()] + (a.getFullYear() !== today().getFullYear() ? ' ' + a.getFullYear() : '') + '</b><button class="icon-btn" data-act="wnext" aria-label="Semaine suivante">' + icon(I.right) + '</button></div>';
     h += '<div class="days" role="tablist" aria-label="Jours">';
     for (var i = 0; i < 7; i++) {
-      var d = addDays(a, i), ds = iso(d), has = blocksForDay(ds).length || M.strava.some(function (x) { return x.date === ds && x.endu; });
+      var d = addDays(a, i), ds = iso(d), has = blocksForDay(ds).length || M.strava.some(function (x) { return x.date === ds && x.endu; }) || freeWatch(ds).length;
       h += '<button type="button" role="tab" class="day' + (has ? ' has' : '') + (ds === t ? ' today' : '') + '" aria-selected="' + (ds === S.wodDay) + '" data-act="wday" data-v="' + ds + '"><span class="d">' + DOW[d.getDay()] + '</span><span class="n">' + d.getDate() + '</span><span class="dot"></span></button>';
     }
     h += '</div>';
@@ -682,7 +682,9 @@
         stat('Distance', x.distance_km ? fmtNum(x.distance_km, 2) + ' km' : '—') + stat('Durée', x.duree_s ? fmtTime(x.duree_s) : '—') + stat(x.endu === 'row' || x.endu === 'ski' ? 'Allure /500 m' : 'Allure', paceStr(x)) +
         stat('FC moy.', x.fc_moy ? x.fc_moy + ' bpm' : '—') + stat(x.watts_moy ? 'Watts moy.' : 'Cadence', x.watts_moy ? x.watts_moy + ' W' : x.cadence_moy ? (x.endu === 'run' ? x.cadence_moy * 2 : x.cadence_moy) + (x.endu === 'run' ? ' pas/min' : '') : '—') + stat('Calories', x.calories ? x.calories + ' kcal' : '—') + '</div></article>';
     });
-    if (!blocks.length && !endu.length) h += '<div class="empty">Rien de prévu ce jour-là.<a class="btn primary" href="#ajouter">' + icon(I.plus) + 'Ajouter un WOD</a><span class="small">Ou envoie les captures de la semaine à Claude.</span></div>';
+    var fw = freeWatch(S.wodDay);
+    fw.forEach(function (w) { h += watchCard(w); });
+    if (!blocks.length && !endu.length && !fw.length) h += '<div class="empty">Rien de prévu ce jour-là.<a class="btn primary" href="#ajouter">' + icon(I.plus) + 'Ajouter un WOD</a><span class="small">Ou envoie les captures de la semaine à Claude.</span></div>';
     return h;
   }
   function stat(l, v) { return '<div class="stack" style="gap:2px"><span class="small muted">' + l + '</span><b style="font-size:15px">' + v + '</b></div>'; }
@@ -1343,6 +1345,25 @@
     var cond = all.filter(function (s) { return s.type_bloc === 'metcon' || s.type_bloc === 'cardio'; });
     if (!cond.length) cond = all.filter(function (s) { return (s.type_bloc === 'gym' || s.type_bloc === 'renfo') && (s.type_score === 'temps' || s.type_score === 'reps' || s.type_score === 'rounds_reps'); });
     return { all: all, cond: cond };
+  }
+  // Séances de la montre d'un jour qui ne sont ni rattachées à un bloc, ni déjà dans Strava (ex. un run du dimanche).
+  function freeWatch(ds) {
+    var cf = cfWatch(ds);
+    return (M.montreBy[ds] || []).filter(function (w) { return w.type !== 'Walking' && cf.indexOf(w) < 0 && !stravaTwin(w); });
+  }
+  function watchCard(w) {
+    var e = WT_ENDU[w.type], pace = '—';
+    if (w.km && w.dur) {
+      if (e === 'run' || e === 'other') pace = fmtTime(w.dur * 60 / w.km) + '/km';
+      else if (w.type === 'Rowing') pace = fmtTime(w.dur * 60 / (w.km * 2)) + '/500 m';
+      else pace = fmtNum(w.km / (w.dur / 60), 1) + ' km/h';
+    }
+    var f = formeOn(w.date);
+    return '<article class="card"><div class="between"><span class="tag cardio">' + esc(wLabel(w.type)) + '</span><span class="small muted">Montre · ' + esc(w.heure || '') + '</span></div><h3 class="h3">' + esc(wLabel(w.type)) + (w.km ? ' ' + fmtNum(w.km, 1) + ' km' : '') + '</h3><div class="grid3">' +
+      stat('Distance', w.km ? fmtNum(w.km, 2) + ' km' : '—') + stat('Durée', w.dur != null ? fmtTime(w.dur * 60) : '—') + stat(w.type === 'Rowing' ? 'Allure /500 m' : 'Allure', pace) +
+      stat('Effort', w.effort != null ? fmtNum(w.effort, 1) + ' / 10' : 'en calcul') + stat('Calories', w.kcal != null ? w.kcal + ' kcal' : '—') + stat('FC moy.', '—') + '</div>' +
+      (f ? '<button class="linkish small" data-act="openforme" data-v="' + f.date + '">Forme ce jour-là : recovery <b style="color:' + recColor(f.recovery) + '">' + (f.recovery != null ? f.recovery + ' %' : '–') + '</b>' + (f.sleep != null ? ' · nuit ' + fmtSleep(f.sleep) : '') + '</button>' : '') +
+      '<span class="small muted">FC et zones : pas dans l’export Athlytic.</span></article>';
   }
   function blockWatch(b) {
     if (!b.done || !b.date_faite || b.source === 'PR') return null;
