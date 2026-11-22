@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.4.3';
+  var VERSION = '2.4.4';
   var CFG_KEY = 'kaizen.config';
   var UI_KEY = 'kaizen.ui';
   var PHOTO_KEY = 'kaizen.photo';
@@ -426,7 +426,7 @@
   function syncBtn() {
     if (!getCfg().url && !demoUrl()) return '';
     var at = S.syncedAt ? (iso(S.syncedAt) === iso(today()) ? pad(S.syncedAt.getHours()) + ':' + pad(S.syncedAt.getMinutes()) : S.syncedAt.getDate() + ' ' + MO[S.syncedAt.getMonth()]) : '';
-    return '<button class="sync-btn' + (S.loading ? ' spin' : '') + '" data-act="refresh" aria-label="Mettre à jour depuis le Sheet"' + (S.loading ? ' disabled' : '') + '>' + icon(I.sync) + '<span>' + (S.loading ? 'Synchro…' : at ? 'Maj ' + at : 'Mettre à jour') + '</span></button>';
+    return '<button class="sync-btn' + (S.loading ? ' spin' : '') + '" data-act="athsync" aria-label="Envoyer les données Athlytic et mettre à jour"' + (S.loading ? ' disabled' : '') + '>' + icon(I.sync) + '<span>' + (S.loading ? 'Synchro…' : at ? 'Maj ' + at : 'Mettre à jour') + '</span></button>';
   }
   function syncLine() {
     if (S.loading) return '<div class="loading">Synchronisation avec le Sheet…</div>';
@@ -1688,6 +1688,12 @@
       case 'goaladd': S.goalForm = !S.goalForm; keepScroll(render); break;
       case 'goaldel': var gl = M.goals.slice(); gl.splice(+v, 1); saveGoals(gl, 'Objectif supprimé'); break;
       case 'refresh': load(true); break;
+      case 'athsync':
+        // Lance le raccourci iPhone « Kaizen Athlytic » (export + envoi au Sheet), puis Kaizen se recharge au retour.
+        if (demoUrl() || !getCfg().url) { load(true); break; }
+        S.awaitAth = Date.now();
+        location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Kaizen Athlytic');
+        break;
       case 'formed': var fk = Object.keys(M.forme).sort(), fi = fk.indexOf(S.formeDay) + (+v); if (fi >= 0 && fi < fk.length) { S.formeDay = fk[fi]; keepScroll(render); } break;
       case 'openforme': S.formeDay = v; S.formeHold = true; if (location.hash === '#forme') { S.formeHold = false; keepScroll(render); } else location.hash = '#forme'; break;
       case 'gowod': S.wodDay = v; S.wodWeek = Math.round((monday(parseD(v)) - monday(today())) / (7 * 864e5)); location.hash = '#wod'; break;
@@ -1719,6 +1725,17 @@
     });
   }
   window.addEventListener('hashchange', route);
+  // Recharge automatique quand Kaizen revient au premier plan (après le raccourci ou un envoi automatique).
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden || S.loading || !getCfg().url) return;
+    var busy = !$('#sheet').hidden || S.tab === 'ajouter' || S.tab === 'moi';
+    var back = S.awaitAth && Date.now() - S.awaitAth < 10 * 60 * 1000;
+    var stale = !S.syncedAt || Date.now() - S.syncedAt.getTime() > 60 * 1000;
+    if (busy || (!back && !stale)) return;
+    S.awaitAth = 0;
+    load(back);
+    if (back) setTimeout(function () { if (!document.hidden && !S.loading) load(false); }, 6000);
+  });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('#sheet').hidden) closeSheet(); });
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(function () {});
 
